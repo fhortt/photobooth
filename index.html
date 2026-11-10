@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Photobooth</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;1,300;1,400&display=swap" rel="stylesheet">
+<style>
+:root{--paper:#f2f1ee;--card:#fbfaf8;--ink:#15181c;--brass:#9c7f4e;--line:#d6d3cb;--mute:#7b7a76;
+  --serif:"Cormorant Garamond",Georgia,"Times New Roman",serif}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;background:var(--paper);color:var(--ink);font-family:var(--serif)}
+#app{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:clamp(12px,2.4vh,26px);padding:18px;position:relative}
+header{text-align:center}
+h1{margin:0;font-weight:300;font-size:clamp(34px,6.4vw,76px);letter-spacing:.06em;line-height:1.05}
+.rule{width:56px;height:1px;background:var(--brass);margin:12px auto 10px}
+.sub{margin:0;font-style:italic;font-weight:300;color:var(--mute);font-size:clamp(16px,2.2vw,24px);letter-spacing:.04em}
+.frame{background:var(--card);padding:clamp(8px,1.6vw,16px);border:1px solid var(--line);box-shadow:0 30px 60px -40px #15181c55}
+.stage{position:relative;width:min(88vw,calc(60vh*4/3));aspect-ratio:4/3;background:#0d0f11;overflow:hidden}
+video,#shot{width:100%;height:100%;object-fit:cover;display:block}
+video{transform:scaleX(-1)}
+#shot{display:none}
+#count{position:absolute;inset:0;display:none;align-items:center;justify-content:center;font-size:min(30vw,250px);font-weight:300;color:#fff;text-shadow:0 4px 40px #0008;font-family:var(--serif)}
+#flash{position:absolute;inset:0;background:#fff;opacity:0;pointer-events:none}
+#flash.on{animation:fl .6s ease-out}
+@keyframes fl{0%{opacity:1}100%{opacity:0}}
+.row{display:flex;gap:14px;flex-wrap:wrap;justify-content:center;min-height:56px}
+button{font-family:var(--serif);font-size:clamp(18px,2.4vw,24px);font-weight:500;letter-spacing:.1em;border:1px solid var(--ink);background:var(--ink);color:var(--paper);padding:14px 44px;cursor:pointer;border-radius:2px;transition:background .2s,color .2s}
+button:hover{background:var(--brass);border-color:var(--brass)}
+button.alt{background:transparent;color:var(--ink)}
+button.alt:hover{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+button:focus-visible{outline:2px solid var(--brass);outline-offset:3px}
+button:disabled{opacity:.5}
+#msg{min-height:1.5em;color:var(--mute);text-align:center;font-size:clamp(15px,1.8vw,20px);font-style:italic}
+#gear{position:absolute;top:12px;right:14px;padding:6px 12px;font-size:18px;border-color:transparent;color:var(--mute);letter-spacing:0}
+#gear:hover{background:transparent;color:var(--brass);border-color:transparent}
+dialog{background:var(--card);color:var(--ink);border:1px solid var(--line);padding:28px;max-width:440px;width:92vw;font-family:var(--serif)}
+dialog::backdrop{background:#15181c88}
+dialog h2{margin:0 0 4px;font-weight:400;font-size:28px;letter-spacing:.05em}
+label{display:block;margin:14px 0 4px;color:var(--mute);font-size:16px}
+input,select{width:100%;padding:10px;border:1px solid var(--line);background:#fff;color:var(--ink);font:inherit;font-size:18px;border-radius:2px}
+small{color:var(--mute);display:block;margin-top:4px;line-height:1.35;font-size:15px}
+#printArea{display:none}
+@media print{
+  body>*:not(#printArea){display:none!important}
+  #printArea{display:block}
+  #printArea img{display:block;width:100%}
+  html,body{background:#fff;margin:0}
+}
+</style>
+<style id="pageStyle">@page{margin:0}</style>
+</head>
+<body>
+<div id="app">
+  <button id="gear" class="alt" title="Configuración" aria-label="Configuración">⚙</button>
+  <header>
+    <h1 id="title">Photobooth</h1>
+    <div class="rule"></div>
+    <p class="sub" id="sub">Un recuerdo de esta noche</p>
+  </header>
+  <div class="frame">
+    <div class="stage">
+      <video id="video" autoplay playsinline muted></video>
+      <canvas id="shot"></canvas>
+      <div id="count"></div>
+      <div id="flash"></div>
+    </div>
+  </div>
+  <div class="row" id="controls"></div>
+  <div id="msg"></div>
+</div>
+
+<div id="printArea"><img id="printImg" alt="Ticket"></div>
+<canvas id="ticket" style="display:none"></canvas>
+<div id="qrTmp" style="display:none"></div>
+
+<dialog id="cfg">
+  <h2>Configuración</h2>
+  <label>Nombre del evento</label><input id="cEvent">
+  <label>Papel de la impresora</label>
+  <select id="cPaper">
+    <option value="812|101.6|152.4">Zebra ZD621 – etiqueta 4x6" (203 dpi)</option>
+    <option value="1218|101.6|152.4">Zebra ZD621 – etiqueta 4x6" (300 dpi)</option>
+    <option value="812|101.6">Zebra 4" – largo automático (rollo continuo)</option>
+    <option value="640|80">Térmico 80 mm</option>
+    <option value="464|58">Térmico 58 mm</option>
+  </select>
+  <label>Cuenta regresiva (segundos)</label><input id="cSecs" type="number" min="1" max="10">
+  <label>API key de ImgBB</label><input id="cKey">
+  <small>Se usa para subir la foto y generar el link del QR.</small>
+  <div class="row" style="margin-top:20px;min-height:0"><button id="cSave">Guardar</button><button id="cClose" class="alt">Cerrar</button></div>
+</dialog>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+const DEFAULT_KEY = "56db7bd6e279757bd373883a2fe025cb";
+const DEF = {event:"Mi Evento", paper:"812|101.6|152.4", secs:3, key:DEFAULT_KEY};
+let cfg = {...DEF}, photoData = null;
+
+try { Object.assign(cfg, JSON.parse(localStorage.getItem("pb_cfg") || "{}")); } catch(e){}
+if (!cfg.key) cfg.key = DEFAULT_KEY;
+function saveCfg(){ try { localStorage.setItem("pb_cfg", JSON.stringify(cfg)); } catch(e){} }
+
+const msg = t => $("msg").textContent = t || "";
+function controls(...btns){
+  const c = $("controls"); c.innerHTML = "";
+  btns.forEach(([label, fn, alt]) => {
+    const b = document.createElement("button");
+    b.textContent = label; if (alt) b.className = "alt"; b.onclick = fn; c.appendChild(b);
+  });
+}
+
+function applyCfg(){
+  $("title").textContent = cfg.event;
+  const p = cfg.paper.split("|").map(Number);
+  $("pageStyle").textContent = `@page{size:${p[1]}mm ${p[2] ? p[2] + "mm" : "auto"};margin:0}`;
+}
+
+/* ---- Cámara ---- */
+async function startCamera(){
+  try {
+    const s = await navigator.mediaDevices.getUserMedia({video:{facingMode:"user",width:{ideal:1280},height:{ideal:960}},audio:false});
+    $("video").srcObject = s;
+  } catch(e){
+    msg("No se pudo acceder a la cámara. Permití el acceso y recargá la página.");
+  }
+}
+
+function home(){
+  $("shot").style.display = "none"; $("video").style.display = "block";
+  $("sub").textContent = "Un recuerdo de esta noche";
+  photoData = null; msg("");
+  controls(["Tomar foto", startCountdown]);
+}
+
+function startCountdown(){
+  controls(); msg("");
+  $("sub").textContent = "Sonreí";
+  let n = cfg.secs; const c = $("count"); c.style.display = "flex"; c.textContent = n;
+  const t = setInterval(() => {
+    n--;
+    if (n <= 0){ clearInterval(t); c.style.display = "none"; capture(); }
+    else c.textContent = n;
+  }, 1000);
+}
+
+function capture(){
+  const v = $("video"), s = $("shot");
+  const w = v.videoWidth || 1280, h = v.videoHeight || 960;
+  let sw = w, sh = w * 3 / 4; if (sh > h){ sh = h; sw = h * 4 / 3; }
+  s.width = 1024; s.height = 768;
+  const x = s.getContext("2d");
+  x.save(); x.translate(s.width, 0); x.scale(-1, 1);
+  x.drawImage(v, (w - sw) / 2, (h - sh) / 2, sw, sh, 0, 0, s.width, s.height);
+  x.restore();
+  photoData = s.toDataURL("image/jpeg", .9);
+  $("flash").classList.remove("on"); void $("flash").offsetWidth; $("flash").classList.add("on");
+  s.style.display = "block"; v.style.display = "none";
+  $("sub").textContent = "¿Te gusta cómo quedó?";
+  controls(["Imprimir", printFlow], ["Repetir", home, true]);
+}
+
+/* ---- Subida y QR ---- */
+async function upload(){
+  const fd = new FormData();
+  fd.append("image", photoData.split(",")[1]);
+  const r = await fetch("https://api.imgbb.com/1/upload?key=" + encodeURIComponent(cfg.key), {method:"POST", body:fd});
+  const j = await r.json();
+  if (!j.success) throw new Error("ImgBB rechazó la subida");
+  return j.data.url_viewer || j.data.url;
+}
+
+function makeQR(text, size){
+  const box = $("qrTmp"); box.innerHTML = "";
+  new QRCode(box, {text, width:size, height:size, correctLevel:QRCode.CorrectLevel.M});
+  return box.querySelector("canvas");
+}
+
+/* ---- Ticket ---- */
+function dither(ctx, x0, y0, w, h){
+  const id = ctx.getImageData(x0, y0, w, h), d = id.data, g = new Float32Array(w * h);
+  for (let i = 0; i < w * h; i++){
+    let v = .299 * d[i*4] + .587 * d[i*4+1] + .114 * d[i*4+2];
+    g[i] = Math.max(0, Math.min(255, (v - 128) * 1.25 + 128));
+  }
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++){
+    const i = y * w + x, o = g[i], n = o < 128 ? 0 : 255, e = o - n;
+    g[i] = n;
+    if (x + 1 < w) g[i+1] += e * 7 / 16;
+    if (y + 1 < h){
+      if (x > 0) g[i+w-1] += e * 3 / 16;
+      g[i+w] += e * 5 / 16;
+      if (x + 1 < w) g[i+w+1] += e * 1 / 16;
+    }
+  }
+  for (let i = 0; i < w * h; i++){ d[i*4] = d[i*4+1] = d[i*4+2] = g[i]; d[i*4+3] = 255; }
+  ctx.putImageData(id, x0, y0);
+}
+
+async function buildTicket(url){
+  const p = cfg.paper.split("|").map(Number), W = p[0], pad = Math.round(W * .05);
+  const pw = W - pad * 2, ph = Math.round(pw * 3 / 4);
+  let qs = Math.round(W * .5), titleH = Math.round(W * .2), footH = Math.round(W * .16);
+  let H = pad + titleH + ph + pad + qs + pad + footH + pad;
+  if (p[2]){
+    H = Math.round(W * p[2] / p[1]);
+    titleH = Math.round(W * .11); footH = Math.round(W * .12);
+    qs = H - pad * 4 - titleH - footH - ph;
+  }
+  const c = $("ticket"); c.width = W; c.height = H;
+  const x = c.getContext("2d");
+  x.fillStyle = "#fff"; x.fillRect(0, 0, W, H);
+
+  x.fillStyle = "#000"; x.textAlign = "center"; x.textBaseline = "middle";
+  let fs = Math.round(W * .085); x.font = `${fs}px Georgia, serif`;
+  while (x.measureText(cfg.event).width > pw && fs > 10){ fs--; x.font = `${fs}px Georgia, serif`; }
+  x.fillText(cfg.event, W / 2, pad + titleH / 2);
+
+  const img = new Image(); img.src = photoData; await img.decode();
+  const py = pad + titleH;
+  x.drawImage(img, pad, py, pw, ph);
+  dither(x, pad, py, pw, ph);
+
+  const qy = py + ph + pad;
+  x.fillStyle = "#fff"; x.fillRect((W - qs) / 2, qy, qs, qs);
+  x.drawImage(makeQR(url, qs), (W - qs) / 2, qy, qs, qs);
+
+  const fy = qy + qs + pad;
+  x.fillStyle = "#000";
+  x.font = `italic ${Math.round(W * .046)}px Georgia, serif`;
+  x.fillText("Escaneá para ver y descargar tu foto", W / 2, fy + footH * .3, pw);
+  x.font = `${Math.round(W * .036)}px Georgia, serif`;
+  x.fillText(new Date().toLocaleString("es-AR"), W / 2, fy + footH * .75);
+  return c.toDataURL("image/png");
+}
+
+async function printFlow(){
+  controls(); msg("Guardando tu foto y preparando el ticket…");
+  try {
+    const url = await upload();
+    const png = await buildTicket(url);
+    const pi = $("printImg");
+    pi.onload = () => { msg("Imprimiendo tu ticket…"); setTimeout(() => window.print(), 150); };
+    pi.src = png;
+  } catch(e){
+    msg("Error: " + e.message + ". Revisá la conexión y la API key.");
+    controls(["Reintentar", printFlow], ["Repetir foto", home, true]);
+    return;
+  }
+  $("sub").textContent = "Gracias por ser parte";
+  controls(["Nueva foto", home], ["Reimprimir", () => window.print(), true]);
+}
+
+/* ---- Configuración ---- */
+$("gear").onclick = () => {
+  $("cEvent").value = cfg.event; $("cPaper").value = cfg.paper; $("cSecs").value = cfg.secs; $("cKey").value = cfg.key;
+  $("cfg").showModal();
+};
+$("cClose").onclick = () => $("cfg").close();
+$("cSave").onclick = () => {
+  cfg.event = $("cEvent").value.trim() || DEF.event;
+  cfg.paper = $("cPaper").value;
+  cfg.secs = Math.max(1, Math.min(10, parseInt($("cSecs").value) || 3));
+  cfg.key = $("cKey").value.trim() || DEFAULT_KEY;
+  saveCfg(); applyCfg(); $("cfg").close();
+};
+
+applyCfg(); startCamera(); home();
+</script>
+</body>
+</html>

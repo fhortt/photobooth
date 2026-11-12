@@ -97,6 +97,8 @@ small{color:var(--mute);display:block;margin-top:4px;line-height:1.35;font-size:
   <label>Cuenta regresiva (segundos)</label><input id="cSecs" type="number" min="1" max="10">
   <label>URL del script de Google Drive</label><input id="cScript" placeholder="https://script.google.com/macros/s/.../exec">
   <small>Guarda la foto y el PDF del ticket en Drive y genera el link del QR.</small>
+  <label>Servidor de impresión (Mac con la Zebra)</label><input id="cPrint" placeholder="https://mi-mac.local:8443/print">
+  <small>Vacío = imprime desde este mismo dispositivo con el diálogo del navegador.</small>
   <label>API key de ImgBB (respaldo si no hay script)</label><input id="cKey">
   <div class="row" style="margin-top:20px;min-height:0"><button id="cSave">Guardar</button><button id="cClose" class="alt">Cerrar</button></div>
 </dialog>
@@ -106,13 +108,15 @@ small{color:var(--mute);display:block;margin-top:4px;line-height:1.35;font-size:
 <script>
 const $ = id => document.getElementById(id);
 const DEFAULT_KEY = "56db7bd6e279757bd373883a2fe025cb";
-const DEFAULT_SCRIPT = "https://script.google.com/macros/s/AKfycbyPG3fev6Hc_1TkJJG3MkY7IPvnE6yO4Q8l8C5-zmpqN4uGplos7lAxvxeSwmVd-99FqA/exec"; // ← pegá acá la URL /exec de tu Google Apps Script
-const DEF = {event:"Mi Evento", paper:"640|80|145", secs:3, key:DEFAULT_KEY, script:DEFAULT_SCRIPT, dither:"fs", tone:.85};
+const DEFAULT_PRINT = "https://script.google.com/macros/s/AKfycbyPG3fev6Hc_1TkJJG3MkY7IPvnE6yO4Q8l8C5-zmpqN4uGplos7lAxvxeSwmVd-99FqA/exec"; // ← opcional: URL del servidor de impresión, ej. https://mi-mac.local:8443/print
+const DEFAULT_SCRIPT = ""; // ← pegá acá la URL /exec de tu Google Apps Script
+const DEF = {event:"Mi Evento", paper:"640|80|145", secs:3, key:DEFAULT_KEY, script:DEFAULT_SCRIPT, print:DEFAULT_PRINT, dither:"fs", tone:.85};
 let cfg = {...DEF}, photoData = null, shotDate = new Date(), sid = 0;
 
 try { Object.assign(cfg, JSON.parse(localStorage.getItem("pb_cfg") || "{}")); } catch(e){}
 if (!cfg.key) cfg.key = DEFAULT_KEY;
 if (!cfg.script) cfg.script = DEFAULT_SCRIPT;
+if (!cfg.print) cfg.print = DEFAULT_PRINT;
 if (!["640|80|145","945|80|145"].includes(cfg.paper)) cfg.paper = DEF.paper;
 function saveCfg(){ try { localStorage.setItem("pb_cfg", JSON.stringify(cfg)); } catch(e){} }
 
@@ -364,6 +368,44 @@ async function savePdf(png, name){
   await driveUpload(pdf.output("datauristring").split(",")[1], "application/pdf", name + ".pdf", false);
 }
 
+/* ---- ZPL: el ticket de 1 bit se envía píxel por píxel a la Zebra ---- */
+function toZpl(c){
+  const W = c.width, H = c.height, bpr = Math.ceil(W / 8), d = c.getContext("2d").getImageData(0, 0, W, H).data, rows = [];
+  for (let y = 0; y < H; y++){
+    let row = "";
+    for (let bx = 0; bx < bpr; bx++){
+      let b = 0;
+      for (let k = 0; k < 8; k++){ const xx = bx * 8 + k; if (xx < W && d[(y * W + xx) * 4] < 128) b |= 0x80 >> k; }
+      row += (b < 16 ? "0" : "") + b.toString(16);
+    }
+    rows.push(row);
+  }
+  const n = bpr * H;
+  return `^XA^CI28^MTD^MNN^PW${W}^LL${H}^LH0,0^PON^FO0,0^GFA,${n},${n},${bpr},${rows.join("").toUpperCase()}^FS^XZ`;
+}
+
+let lastPng = null, lastZpl = null;
+async function doPrint(){
+  if (cfg.print){
+    const r = await fetch(cfg.print, {method:"POST", headers:{"Content-Type":"text/plain;charset=utf-8"}, body:lastZpl});
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.error || "la impresora rechazó el trabajo");
+  } else {
+    await new Promise(res => { const pi = $("printImg"); pi.onload = () => setTimeout(() => { window.print(); res(); }, 150); pi.src = lastPng; });
+  }
+}
+async function printOut(){
+  controls(); msg("Imprimiendo tu ticket…");
+  try {
+    await doPrint();
+    $("sub").textContent = "Gracias por ser parte";
+    controls(["Nueva foto", home], ["Reimprimir", printOut, true]);
+  } catch(e){
+    msg("No se pudo imprimir: " + e.message);
+    controls(["Reintentar impresión", printOut], ["Nueva foto", home, true]);
+  }
+}
+
 async function printFlow(){
   controls(); const my = sid, name = fileBase();
   try {
@@ -371,27 +413,23 @@ async function printFlow(){
     const b64 = photoData.split(",")[1];
     const url = cfg.script ? await driveUpload(b64, "image/jpeg", name + ".jpg", true) : await imgbbUpload(b64);
     msg("Preparando el ticket…");
-    const png = await buildTicket(url);
-    if (cfg.script) savePdf(png, name)
+    lastPng = await buildTicket(url); lastZpl = toZpl($("ticket"));
+    if (cfg.script) savePdf(lastPng, name)
       .then(() => { if (sid === my) msg("Ticket impreso y guardado en Drive ✓"); })
       .catch(() => { if (sid === my) msg("Ticket impreso, pero no se pudo guardar el PDF en Drive"); });
-    const pi = $("printImg");
-    pi.onload = () => { msg("Imprimiendo tu ticket…"); setTimeout(() => window.print(), 150); };
-    pi.src = png;
   } catch(e){
     msg("Error: " + e.message + ". Revisá la conexión y la configuración.");
     controls(["Reintentar", printFlow], ["Repetir foto", home, true]);
     return;
   }
-  $("sub").textContent = "Gracias por ser parte";
-  controls(["Nueva foto", home], ["Reimprimir", () => window.print(), true]);
+  printOut();
 }
 
 /* ---- Configuración ---- */
 $("gear").onclick = () => {
   $("cEvent").value = cfg.event; $("cPaper").value = cfg.paper; if (!$("cPaper").value) $("cPaper").selectedIndex = 0;
   $("cDither").value = cfg.dither; $("cTone").value = String(cfg.tone); if (!$("cTone").value) $("cTone").value = "0.85";
-  $("cSecs").value = cfg.secs; $("cScript").value = cfg.script; $("cKey").value = cfg.key;
+  $("cSecs").value = cfg.secs; $("cScript").value = cfg.script; $("cPrint").value = cfg.print; $("cKey").value = cfg.key;
   $("cfg").showModal();
 };
 $("cClose").onclick = () => $("cfg").close();
@@ -399,7 +437,7 @@ $("cSave").onclick = () => {
   cfg.event = $("cEvent").value.trim() || DEF.event;
   cfg.paper = $("cPaper").value; cfg.dither = $("cDither").value; cfg.tone = parseFloat($("cTone").value);
   cfg.secs = Math.max(1, Math.min(10, parseInt($("cSecs").value) || 3));
-  cfg.script = $("cScript").value.trim(); cfg.key = $("cKey").value.trim() || DEFAULT_KEY;
+  cfg.script = $("cScript").value.trim(); cfg.print = $("cPrint").value.trim(); cfg.key = $("cKey").value.trim() || DEFAULT_KEY;
   saveCfg(); applyCfg(); $("cfg").close();
 };
 

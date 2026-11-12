@@ -111,6 +111,900 @@ const DEFAULT_KEY = "56db7bd6e279757bd373883a2fe025cb";
 const DEFAULT_PRINT = "https://script.google.com/macros/s/AKfycbyPG3fev6Hc_1TkJJG3MkY7IPvnE6yO4Q8l8C5-zmpqN4uGplos7lAxvxeSwmVd-99FqA/exec"; // ← opcional: URL del servidor de impresión, ej. https://mi-mac.local:8443/print
 const DEFAULT_SCRIPT = ""; // ← pegá acá la URL /exec de tu Google Apps Script
 const DEF = {event:"Mi Evento", paper:"640|80|145", secs:3, key:DEFAULT_KEY, script:DEFAULT_SCRIPT, print:DEFAULT_PRINT, dither:"fs", tone:.85};
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Photobooth</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;1,300;1,400&display=swap" rel="stylesheet">
+<style>
+:root{--paper:#f2f1ee;--card:#fbfaf8;--ink:#15181c;--brass:#9c7f4e;--line:#d6d3cb;--mute:#7b7a76;--ar:1.2;
+  --serif:"Cormorant Garamond",Georgia,"Times New Roman",serif}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;background:var(--paper);color:var(--ink);font-family:var(--serif)}
+#app{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:clamp(12px,2.4vh,26px);padding:18px;position:relative}
+header{text-align:center}
+h1{margin:0;font-weight:300;font-size:clamp(34px,6.4vw,76px);letter-spacing:.06em;line-height:1.05}
+.rule{width:56px;height:1px;background:var(--brass);margin:12px auto 10px}
+.sub{margin:0;font-style:italic;font-weight:300;color:var(--mute);font-size:clamp(16px,2.2vw,24px);letter-spacing:.04em}
+.frame{background:var(--card);padding:clamp(8px,1.6vw,16px);border:1px solid var(--line);box-shadow:0 30px 60px -40px #15181c55}
+.stage{position:relative;width:min(88vw,calc(54vh*var(--ar)));aspect-ratio:var(--ar);background:#0d0f11;overflow:hidden}
+video,#shot{width:100%;height:100%;object-fit:cover;display:block}
+video{transform:scaleX(-1)}
+#shot{display:none}
+#count{position:absolute;inset:0;display:none;align-items:center;justify-content:center;font-size:min(30vw,250px);font-weight:300;color:#fff;text-shadow:0 4px 40px #0008}
+#flash{position:absolute;inset:0;background:#fff;opacity:0;pointer-events:none}
+#flash.on{animation:fl .6s ease-out}
+@keyframes fl{0%{opacity:1}100%{opacity:0}}
+.row{display:flex;gap:14px;flex-wrap:wrap;justify-content:center;min-height:56px}
+button{font-family:var(--serif);font-size:clamp(18px,2.4vw,24px);font-weight:500;letter-spacing:.1em;border:1px solid var(--ink);background:var(--ink);color:var(--paper);padding:14px 44px;cursor:pointer;border-radius:2px;transition:background .2s,color .2s}
+button:hover{background:var(--brass);border-color:var(--brass)}
+button.alt{background:transparent;color:var(--ink)}
+button.alt:hover{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+button:focus-visible{outline:2px solid var(--brass);outline-offset:3px}
+#msg{min-height:1.5em;color:var(--mute);text-align:center;font-size:clamp(15px,1.8vw,20px);font-style:italic}
+#gear{position:absolute;top:12px;right:14px;padding:6px 12px;font-size:18px;border-color:transparent;color:var(--mute);letter-spacing:0}
+#gear:hover{background:transparent;color:var(--brass);border-color:transparent}
+dialog{background:var(--card);color:var(--ink);border:1px solid var(--line);padding:26px;max-width:460px;width:92vw;max-height:92vh;overflow:auto;font-family:var(--serif)}
+dialog::backdrop{background:#15181c88}
+dialog h2{margin:0 0 4px;font-weight:400;font-size:28px;letter-spacing:.05em}
+label{display:block;margin:12px 0 4px;color:var(--mute);font-size:16px}
+input,select{width:100%;padding:9px;border:1px solid var(--line);background:#fff;color:var(--ink);font:inherit;font-size:18px;border-radius:2px}
+small{color:var(--mute);display:block;margin-top:4px;line-height:1.35;font-size:15px}
+#printArea{display:none}
+@media print{
+  body>*:not(#printArea){display:none!important}
+  #printArea{display:block}
+  #printArea img{display:block;width:100%;height:auto;image-rendering:pixelated}
+  html,body{background:#fff;margin:0}
+}
+</style>
+<style id="pageStyle">@page{margin:0}</style>
+</head>
+<body>
+<div id="app">
+  <button id="gear" class="alt" title="Configuración" aria-label="Configuración">⚙</button>
+  <header>
+    <h1 id="title">Photobooth</h1>
+    <div class="rule"></div>
+    <p class="sub" id="sub">Un recuerdo de esta noche</p>
+  </header>
+  <div class="frame">
+    <div class="stage">
+      <video id="video" autoplay playsinline muted></video>
+      <canvas id="shot"></canvas>
+      <div id="count"></div>
+      <div id="flash"></div>
+    </div>
+  </div>
+  <div class="row" id="controls"></div>
+  <div id="msg"></div>
+</div>
+
+<div id="printArea"><img id="printImg" alt="Ticket"></div>
+<canvas id="ticket" style="display:none"></canvas>
+<div id="qrTmp" style="display:none"></div>
+
+<dialog id="cfg">
+  <h2>Configuración</h2>
+  <label>Nombre del evento</label><input id="cEvent">
+  <label>Papel de la impresora</label>
+  <select id="cPaper">
+    <option value="640|80|145">Térmico 80 × 145 mm (203 dpi)</option>
+    <option value="945|80|145">Térmico 80 × 145 mm (300 dpi)</option>
+  </select>
+  <label>Tramado de la foto impresa</label>
+  <select id="cDither">
+    <option value="fs">Floyd–Steinberg (más detalle)</option>
+    <option value="atk">Atkinson (más contraste)</option>
+  </select>
+  <label>Brillo de la foto impresa</label>
+  <select id="cTone">
+    <option value="0.7">Más claro</option>
+    <option value="0.85">Normal</option>
+    <option value="1">Más oscuro</option>
+  </select>
+  <label>Cuenta regresiva (segundos)</label><input id="cSecs" type="number" min="1" max="10">
+  <label>URL del script de Google Drive</label><input id="cScript" placeholder="https://script.google.com/macros/s/.../exec">
+  <small>Guarda la foto y el PDF del ticket en Drive y genera el link del QR.</small>
+  <label>Servidor de impresión (Mac con la Zebra)</label><input id="cPrint" placeholder="https://mi-mac.local:8443/print">
+  <small>Vacío = imprime desde este mismo dispositivo con el diálogo del navegador.</small>
+  <label>API key de ImgBB (respaldo si no hay script)</label><input id="cKey">
+  <div class="row" style="margin-top:20px;min-height:0"><button id="cSave">Guardar</button><button id="cClose" class="alt">Cerrar</button></div>
+</dialog>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+const DEFAULT_KEY = "56db7bd6e279757bd373883a2fe025cb";
+const DEFAULT_PRINT = "https://script.google.com/macros/s/AKfycbyPG3fev6Hc_1TkJJG3MkY7IPvnE6yO4Q8l8C5-zmpqN4uGplos7lAxvxeSwmVd-99FqA/exec"; // ← opcional: URL del servidor de impresión, ej. https://mi-mac.local:8443/print
+const DEFAULT_SCRIPT = ""; // ← pegá acá la URL /exec de tu Google Apps Script
+const DEF = {event:"Mi Evento", paper:"640|80|145", secs:3, key:DEFAULT_KEY, script:DEFAULT_SCRIPT, print:DEFAULT_PRINT, dither:"fs", tone:.85};
+let cfg = {...DEF}, photoData = null, shotDate = new Date(), sid = 0;
+
+try { Object.assign(cfg, JSON.parse(localStorage.getItem("pb_cfg") || "{}")); } catch(e){}
+if (!cfg.key) cfg.key = DEFAULT_KEY;
+if (!cfg.script) cfg.script = DEFAULT_SCRIPT;
+if (!cfg.print) cfg.print = DEFAULT_PRINT;
+if (!["640|80|145","945|80|145"].includes(cfg.paper)) cfg.paper = DEF.paper;
+function saveCfg(){ try { localStorage.setItem("pb_cfg", JSON.stringify(cfg)); } catch(e){} }
+
+const msg = t => $("msg").textContent = t || "";
+const paper = () => cfg.paper.split("|").map(Number);
+function controls(...btns){
+  const c = $("controls"); c.innerHTML = "";
+  btns.forEach(([label, fn, alt]) => {
+    const b = document.createElement("button");
+    b.textContent = label; if (alt) b.className = "alt"; b.onclick = fn; c.appendChild(b);
+  });
+}
+
+/* ---- Geometría del ticket (1 píxel = 1 punto de la impresora) ---- */
+function layout(p){
+  const W = p[0], u = W / 640, S = n => Math.round(n * u);
+  return {W, u, S, H: S(1160), dpmm: W / p[1], pw: W, ph: W};
+}
+
+function applyCfg(){
+  $("title").textContent = cfg.event;
+  const p = paper(), L = layout(p);
+  $("pageStyle").textContent = `@page{size:${p[1]}mm ${(L.H / L.dpmm).toFixed(1)}mm;margin:0}`;
+  document.documentElement.style.setProperty("--ar", (L.pw / L.ph).toFixed(4));
+}
+
+/* ---- Cámara ---- */
+async function startCamera(){
+  try {
+    const s = await navigator.mediaDevices.getUserMedia({video:{facingMode:"user",width:{ideal:1920},height:{ideal:1080}},audio:false});
+    $("video").srcObject = s;
+  } catch(e){ msg("No se pudo acceder a la cámara. Permití el acceso y recargá la página."); }
+}
+
+function home(){
+  sid++;
+  $("shot").style.display = "none"; $("video").style.display = "block";
+  $("sub").textContent = "Un recuerdo de esta noche";
+  photoData = null; msg("");
+  controls(["Tomar foto", startCountdown]);
+}
+
+function startCountdown(){
+  controls(); msg(""); $("sub").textContent = "Sonreí";
+  let n = cfg.secs; const c = $("count"); c.style.display = "flex"; c.textContent = n;
+  const t = setInterval(() => {
+    n--;
+    if (n <= 0){ clearInterval(t); c.style.display = "none"; capture(); }
+    else c.textContent = n;
+  }, 1000);
+}
+
+function capture(){
+  const v = $("video"), s = $("shot"), L = layout(paper()), ar = L.pw / L.ph;
+  const w = v.videoWidth || 1280, h = v.videoHeight || 720;
+  let sw = w, sh = w / ar; if (sh > h){ sh = h; sw = h * ar; }
+  s.width = Math.min(Math.round(sw), 2048); s.height = Math.round(s.width / ar);
+  const x = s.getContext("2d"); x.imageSmoothingQuality = "high";
+  x.save(); x.translate(s.width, 0); x.scale(-1, 1);
+  x.drawImage(v, (w - sw) / 2, (h - sh) / 2, sw, sh, 0, 0, s.width, s.height);
+  x.restore();
+  photoData = s.toDataURL("image/jpeg", .92); shotDate = new Date();
+  $("flash").classList.remove("on"); void $("flash").offsetWidth; $("flash").classList.add("on");
+  s.style.display = "block"; v.style.display = "none";
+  $("sub").textContent = "¿Te gusta cómo quedó?";
+  controls(["Imprimir", printFlow], ["Repetir", home, true]);
+}
+
+/* ---- Almacenamiento ---- */
+async function driveUpload(b64, mime, name, share){
+  const r = await fetch(cfg.script, {method:"POST", headers:{"Content-Type":"text/plain;charset=utf-8"}, body:JSON.stringify({data:b64, mime, name, share})});
+  const j = await r.json();
+  if (!j.ok) throw new Error(j.error || "Drive rechazó la subida");
+  return j.url;
+}
+async function imgbbUpload(b64){
+  const fd = new FormData(); fd.append("image", b64);
+  const r = await fetch("https://api.imgbb.com/1/upload?key=" + encodeURIComponent(cfg.key), {method:"POST", body:fd});
+  const j = await r.json();
+  if (!j.success) throw new Error("ImgBB rechazó la subida");
+  return j.data.url_viewer || j.data.url;
+}
+const pad2 = n => String(n).padStart(2, "0");
+function fileBase(){
+  const d = shotDate, slug = cfg.event.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^\w]+/g, "-").replace(/^-|-$/g, "") || "photobooth";
+  return `${slug}_${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}_${pad2(d.getHours())}-${pad2(d.getMinutes())}-${pad2(d.getSeconds())}`;
+}
+
+/* ---- QR con módulos enteros (nítido en impresora) ---- */
+function qrModules(text){
+  const box = $("qrTmp"); box.innerHTML = "";
+  const q = new QRCode(box, {text, width:64, height:64, correctLevel:QRCode.CorrectLevel.M}), m = q._oQRCode;
+  return {n: m.getModuleCount(), dark: (r, c) => m.isDark(r, c)};
+}
+
+/* ---- Tono + tramado ---- */
+function toneAndDither(ctx, x0, y0, w, h){
+  const id = ctx.getImageData(x0, y0, w, h), d = id.data, n = w * h, g = new Float32Array(n), hist = new Uint32Array(256);
+  for (let i = 0; i < n; i++){ const v = .299 * d[i*4] + .587 * d[i*4+1] + .114 * d[i*4+2]; g[i] = v; hist[v | 0]++; }
+  let lo = 0, hi = 255, acc = 0;
+  while (lo < 254 && (acc += hist[lo]) < n * .01) lo++;
+  acc = 0; while (hi > 1 && (acc += hist[hi]) < n * .01) hi--;
+  if (hi - lo < 40){ lo = 0; hi = 255; }
+  for (let i = 0; i < n; i++) g[i] = 255 * Math.pow(Math.min(1, Math.max(0, (g[i] - lo) / (hi - lo))), cfg.tone);
+  const b = new Float32Array(n);  // desenfoque 3x3 para máscara de nitidez
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++){
+    let s = 0;
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++)
+      s += g[Math.min(h-1, Math.max(0, y+dy)) * w + Math.min(w-1, Math.max(0, x+dx))];
+    b[y*w+x] = s / 9;
+  }
+  for (let i = 0; i < n; i++) g[i] = Math.min(255, Math.max(0, g[i] + .7 * (g[i] - b[i])));
+  const K = cfg.dither === "atk"
+    ? [[1,0,1/8],[2,0,1/8],[-1,1,1/8],[0,1,1/8],[1,1,1/8],[0,2,1/8]]
+    : [[1,0,7/16],[-1,1,3/16],[0,1,5/16],[1,1,1/16]];
+  for (let y = 0; y < h; y++){
+    const dir = y % 2 ? -1 : 1;
+    for (let k = 0; k < w; k++){
+      const x = dir > 0 ? k : w - 1 - k, i = y * w + x, o = g[i], nv = o < 128 ? 0 : 255, e = o - nv;
+      g[i] = nv;
+      for (const [dx, dy, wt] of K){ const xx = x + dx * dir, yy = y + dy; if (xx >= 0 && xx < w && yy < h) g[yy*w+xx] += e * wt; }
+    }
+  }
+  for (let i = 0; i < n; i++){ d[i*4] = d[i*4+1] = d[i*4+2] = g[i]; d[i*4+3] = 255; }
+  ctx.putImageData(id, x0, y0);
+}
+
+/* ---- Ticket ---- */
+const MONO = '"Courier New", Courier, "Hiragino Kaku Gothic ProN", "Hiragino Sans", "Yu Gothic", monospace';
+
+function nextNo(){
+  try { const n = (parseInt(localStorage.getItem("pb_no")) || 0) + 1; localStorage.setItem("pb_no", n); return String(n).padStart(4, "0"); }
+  catch(e){ return pad2(shotDate.getMinutes()) + pad2(shotDate.getSeconds()); }
+}
+
+// Fecha estilo cámara analógica: dígitos de 7 segmentos, inclinados, blancos con contorno negro
+function stamp(x, text, ox, oy, S){
+  const dw = S(26), dh = S(46), t = S(7), sp = S(14), o = S(2.5);
+  const MAP = {0:"abcdef",1:"bc",2:"abdeg",3:"abcdg",4:"bcfg",5:"acdfg",6:"acdefg",7:"abc",8:"abcdefg",9:"abcdfg"};
+  const hl = dw - t * .5, vl = dh / 2 - t * .5;
+  const hz = (cx, cy) => [[cx-hl/2,cy],[cx-hl/2+t/2,cy-t/2],[cx+hl/2-t/2,cy-t/2],[cx+hl/2,cy],[cx+hl/2-t/2,cy+t/2],[cx-hl/2+t/2,cy+t/2]];
+  const vt = (cx, cy) => [[cx,cy-vl/2],[cx+t/2,cy-vl/2+t/2],[cx+t/2,cy+vl/2-t/2],[cx,cy+vl/2],[cx-t/2,cy+vl/2-t/2],[cx-t/2,cy-vl/2+t/2]];
+  const pos = {a:[dw/2,0,hz], g:[dw/2,dh/2,hz], d:[dw/2,dh,hz], f:[0,dh/4,vt], b:[dw,dh/4,vt], e:[0,dh*3/4,vt], c:[dw,dh*3/4,vt]};
+  const polys = []; let cx = 0;
+  for (const ch of text){
+    if (ch === " "){ cx += dw * .6; continue; }
+    if (ch === "'"){ polys.push([[cx+t*.6,0],[cx+t*1.7,0],[cx+t*.9,dh*.3],[cx-t*.2,dh*.3]]); cx += t * 2.4; continue; }
+    for (const s of MAP[ch]){ const [sx, sy, f] = pos[s]; polys.push(f(cx + sx, sy)); }
+    cx += dw + sp;
+  }
+  const path = pg => { x.beginPath(); pg.forEach(([a, b], i) => i ? x.lineTo(a, b) : x.moveTo(a, b)); x.closePath(); };
+  x.save(); x.translate(ox + t, oy); x.transform(1, 0, -.14, 1, 0, 0);
+  x.lineJoin = "round"; x.fillStyle = "#000"; x.strokeStyle = "#000"; x.lineWidth = o * 2;
+  polys.forEach(pg => { path(pg); x.fill(); x.stroke(); });
+  x.fillStyle = "#fff"; polys.forEach(pg => { path(pg); x.fill(); });
+  x.restore();
+}
+
+async function buildTicket(url){
+  const L = layout(paper()), {W, H, S} = L, pad = S(34), no = nextNo(), d = shotDate;
+  const c = $("ticket"); c.width = W; c.height = H;
+  const x = c.getContext("2d"); x.imageSmoothingQuality = "high";
+  x.fillStyle = "#fff"; x.fillRect(0, 0, W, H);
+  x.fillStyle = "#000"; x.strokeStyle = "#000"; x.textBaseline = "middle";
+  const T = (s, xx, yy, size, o = {}) => {
+    x.font = `${o.b ? "bold " : ""}${size}px ${MONO}`; x.textAlign = o.a || "left"; x.letterSpacing = (o.k || 0) + "px";
+    x.fillText(s, xx, yy, o.m); x.letterSpacing = "0px";
+  };
+  const dash = (yy, w, dd, x1 = pad, x2 = W - pad) => {
+    x.save(); x.lineWidth = S(w); x.setLineDash(dd.map(S)); x.beginPath(); x.moveTo(x1, yy); x.lineTo(x2, yy); x.stroke(); x.restore();
+  };
+
+  // encabezado
+  T("✂", pad, S(10), S(16)); dash(S(10), 2, [8, 6], pad + S(26));
+  const title = cfg.event.toUpperCase(); let fs = S(46);
+  x.textAlign = "center"; x.letterSpacing = S(6) + "px";
+  do { x.font = `bold ${fs}px ${MONO}`; fs--; } while (x.measureText(title).width > W - 2 * pad && fs > 10);
+  x.fillText(title, W / 2, S(46)); x.letterSpacing = "0px";
+  T("RECEIPT No." + no, pad, S(82), S(17));
+  T("写真レシート", W - pad, S(82), S(17), {a: "right"});
+
+  // foto: ancho completo, 1:1
+  const py = S(96), img = new Image(); img.src = photoData; await img.decode();
+  const iw = img.naturalWidth, ih = img.naturalHeight, side = Math.min(iw, ih);
+  x.drawImage(img, (iw - side) / 2, (ih - side) / 2, side, side, 0, py, W, W);
+  toneAndDither(x, 0, py, W, W);
+  stamp(x, `${pad2(d.getDate())} ${pad2(d.getMonth() + 1)} '${String(d.getFullYear()).slice(2)}`, S(26), py + S(24), S);
+
+  // pie tipo recibo
+  const y0 = py + W + S(12);
+  dash(y0, 2, [10, 6]);
+  const qm = qrModules(url), mod = Math.max(3, Math.round(.4 * L.dpmm)), qs = (qm.n + 4) * mod;
+  const qx = W - pad - qs, qy = y0 + S(14);
+  x.fillStyle = "#fff"; x.fillRect(qx, qy, qs, qs); x.fillStyle = "#000";
+  for (let r = 0; r < qm.n; r++) for (let cc = 0; cc < qm.n; cc++)
+    if (qm.dark(r, cc)) x.fillRect(qx + (cc + 2) * mod, qy + (r + 2) * mod, mod, mod);
+  T("SCAN 読み取り", qx + qs / 2, qy + qs + S(14), S(15), {a: "center", b: true, m: qs + S(20)});
+
+  const lx = pad, cw = qx - S(18) - lx;
+  const leader = (l, r, yy) => {
+    x.font = `${S(22)}px ${MONO}`; x.textAlign = "left";
+    const wl = x.measureText(l).width, wr = x.measureText(r).width, wd = x.measureText(".").width;
+    x.fillText(l, lx, yy); x.textAlign = "right"; x.fillText(r, lx + cw, yy);
+    x.textAlign = "left"; x.fillText(".".repeat(Math.max(0, Math.floor((cw - wl - wr - S(14)) / wd))), lx + wl + S(7), yy);
+  };
+  let ly = y0 + S(26);
+  leader("DATE 日付", `${pad2(d.getDate())}.${pad2(d.getMonth() + 1)}.${d.getFullYear()}`, ly); ly += S(28);
+  leader("TIME 時刻", `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`, ly); ly += S(28);
+  leader("No. 番号", no, ly); ly += S(28);
+  dash(ly, 1.5, [4, 4], lx, lx + cw); ly += S(28);
+  leader("PHOTO 写真", "x1", ly); ly += S(28);
+  leader("MEMORY 思い出", "∞", ly);
+
+  x.save(); x.translate(S(16), y0 + S(100)); x.rotate(-Math.PI / 2);
+  T("PHOTO RECEIPT 写真", 0, 0, S(14), {a: "center", m: S(170)}); x.restore();
+
+  // total
+  const yt = y0 + S(196);
+  x.fillRect(pad, yt, W - 2 * pad, S(3));
+  T("合計 TOTAL", pad, yt + S(36), S(32), {b: true});
+  T("¥0", W - pad, yt + S(36), S(56), {a: "right", b: true});
+
+  // código de barras decorativo
+  const yb = yt + S(78); let sd = (parseInt(no) * 9973 + d.getTime() % 100000) >>> 0;
+  const rnd = () => { sd |= 0; sd = sd + 0x6D2B79F5 | 0; let z = Math.imul(sd ^ sd >>> 15, 1 | sd); z = z + Math.imul(z ^ z >>> 7, 61 | z) ^ z; return ((z ^ z >>> 14) >>> 0) / 4294967296; };
+  for (let bx = pad, on = true; bx < W - pad; on = !on){
+    const bw = S(2) * (1 + (rnd() * 4 | 0));
+    if (on) x.fillRect(bx, yb, Math.min(bw, W - pad - bx), S(52));
+    bx += bw;
+  }
+  T(`*${no}${pad2(d.getHours())}${pad2(d.getMinutes())}${pad2(d.getSeconds())}*`, W / 2, yb + S(66), S(15), {a: "center", k: S(4)});
+  T("THANK YOU * ありがとうございました", W / 2, yt + S(176), S(19), {a: "center", m: W - 2 * pad});
+  T("✂", pad, S(1148), S(16)); dash(S(1148), 2, [8, 6], pad + S(26));
+
+  // 1 bit: texto y líneas nítidos para la impresora térmica
+  const id = x.getImageData(0, 0, W, H), pd = id.data;
+  for (let i = 0; i < pd.length; i += 4){
+    const v = (pd[i] * .299 + pd[i+1] * .587 + pd[i+2] * .114) < 150 ? 0 : 255;
+    pd[i] = pd[i+1] = pd[i+2] = v; pd[i+3] = 255;
+  }
+  x.putImageData(id, 0, 0);
+  return c.toDataURL("image/png");
+}
+
+async function savePdf(png, name){
+  const L = layout(paper()), wmm = paper()[1], hmm = L.H / L.dpmm;
+  const pdf = new window.jspdf.jsPDF({unit:"mm", format:[wmm, hmm], orientation: hmm > wmm ? "portrait" : "landscape", compress:true});
+  pdf.addImage(png, "PNG", 0, 0, wmm, hmm, undefined, "FAST");
+  await driveUpload(pdf.output("datauristring").split(",")[1], "application/pdf", name + ".pdf", false);
+}
+
+/* ---- ZPL: el ticket de 1 bit se envía píxel por píxel a la Zebra ---- */
+function toZpl(c){
+  const W = c.width, H = c.height, bpr = Math.ceil(W / 8), d = c.getContext("2d").getImageData(0, 0, W, H).data, rows = [];
+  for (let y = 0; y < H; y++){
+    let row = "";
+    for (let bx = 0; bx < bpr; bx++){
+      let b = 0;
+      for (let k = 0; k < 8; k++){ const xx = bx * 8 + k; if (xx < W && d[(y * W + xx) * 4] < 128) b |= 0x80 >> k; }
+      row += (b < 16 ? "0" : "") + b.toString(16);
+    }
+    rows.push(row);
+  }
+  const n = bpr * H;
+  return `^XA^CI28^MTD^MNN^PW${W}^LL${H}^LH0,0^PON^FO0,0^GFA,${n},${n},${bpr},${rows.join("").toUpperCase()}^FS^XZ`;
+}
+
+let lastPng = null, lastZpl = null;
+async function doPrint(){
+  if (cfg.print){
+    const r = await fetch(cfg.print, {method:"POST", headers:{"Content-Type":"text/plain;charset=utf-8"}, body:lastZpl});
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.error || "la impresora rechazó el trabajo");
+  } else {
+    await new Promise(res => { const pi = $("printImg"); pi.onload = () => setTimeout(() => { window.print(); res(); }, 150); pi.src = lastPng; });
+  }
+}
+async function printOut(){
+  controls(); msg("Imprimiendo tu ticket…");
+  try {
+    await doPrint();
+    $("sub").textContent = "Gracias por ser parte";
+    controls(["Nueva foto", home], ["Reimprimir", printOut, true]);
+  } catch(e){
+    msg("No se pudo imprimir: " + e.message);
+    controls(["Reintentar impresión", printOut], ["Nueva foto", home, true]);
+  }
+}
+
+async function printFlow(){
+  controls(); const my = sid, name = fileBase();
+  try {
+    msg("Guardando tu foto…");
+    const b64 = photoData.split(",")[1];
+    const url = cfg.script ? await driveUpload(b64, "image/jpeg", name + ".jpg", true) : await imgbbUpload(b64);
+    msg("Preparando el ticket…");
+    lastPng = await buildTicket(url); lastZpl = toZpl($("ticket"));
+    if (cfg.script) savePdf(lastPng, name)
+      .then(() => { if (sid === my) msg("Ticket impreso y guardado en Drive ✓"); })
+      .catch(() => { if (sid === my) msg("Ticket impreso, pero no se pudo guardar el PDF en Drive"); });
+  } catch(e){
+    msg("Error: " + e.message + ". Revisá la conexión y la configuración.");
+    controls(["Reintentar", printFlow], ["Repetir foto", home, true]);
+    return;
+  }
+  printOut();
+}
+
+/* ---- Configuración ---- */
+$("gear").onclick = () => {
+  $("cEvent").value = cfg.event; $("cPaper").value = cfg.paper; if (!$("cPaper").value) $("cPaper").selectedIndex = 0;
+  $("cDither").value = cfg.dither; $("cTone").value = String(cfg.tone); if (!$("cTone").value) $("cTone").value = "0.85";
+  $("cSecs").value = cfg.secs; $("cScript").value = cfg.script; $("cPrint").value = cfg.print; $("cKey").value = cfg.key;
+  <!DOCTYPE html>
+  <html lang="es">
+  <head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Photobooth</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;1,300;1,400&display=swap" rel="stylesheet">
+  <style>
+  :root{--paper:#f2f1ee;--card:#fbfaf8;--ink:#15181c;--brass:#9c7f4e;--line:#d6d3cb;--mute:#7b7a76;--ar:1.2;
+    --serif:"Cormorant Garamond",Georgia,"Times New Roman",serif}
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0;background:var(--paper);color:var(--ink);font-family:var(--serif)}
+  #app{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:clamp(12px,2.4vh,26px);padding:18px;position:relative}
+  header{text-align:center}
+  h1{margin:0;font-weight:300;font-size:clamp(34px,6.4vw,76px);letter-spacing:.06em;line-height:1.05}
+  .rule{width:56px;height:1px;background:var(--brass);margin:12px auto 10px}
+  .sub{margin:0;font-style:italic;font-weight:300;color:var(--mute);font-size:clamp(16px,2.2vw,24px);letter-spacing:.04em}
+  .frame{background:var(--card);padding:clamp(8px,1.6vw,16px);border:1px solid var(--line);box-shadow:0 30px 60px -40px #15181c55}
+  .stage{position:relative;width:min(88vw,calc(54vh*var(--ar)));aspect-ratio:var(--ar);background:#0d0f11;overflow:hidden}
+  video,#shot{width:100%;height:100%;object-fit:cover;display:block}
+  video{transform:scaleX(-1)}
+  #shot{display:none}
+  #count{position:absolute;inset:0;display:none;align-items:center;justify-content:center;font-size:min(30vw,250px);font-weight:300;color:#fff;text-shadow:0 4px 40px #0008}
+  #flash{position:absolute;inset:0;background:#fff;opacity:0;pointer-events:none}
+  #flash.on{animation:fl .6s ease-out}
+  @keyframes fl{0%{opacity:1}100%{opacity:0}}
+  .row{display:flex;gap:14px;flex-wrap:wrap;justify-content:center;min-height:56px}
+  button{font-family:var(--serif);font-size:clamp(18px,2.4vw,24px);font-weight:500;letter-spacing:.1em;border:1px solid var(--ink);background:var(--ink);color:var(--paper);padding:14px 44px;cursor:pointer;border-radius:2px;transition:background .2s,color .2s}
+  button:hover{background:var(--brass);border-color:var(--brass)}
+  button.alt{background:transparent;color:var(--ink)}
+  button.alt:hover{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+  button:focus-visible{outline:2px solid var(--brass);outline-offset:3px}
+  #msg{min-height:1.5em;color:var(--mute);text-align:center;font-size:clamp(15px,1.8vw,20px);font-style:italic}
+  #gear{position:absolute;top:12px;right:14px;padding:6px 12px;font-size:18px;border-color:transparent;color:var(--mute);letter-spacing:0}
+  #gear:hover{background:transparent;color:var(--brass);border-color:transparent}
+  dialog{background:var(--card);color:var(--ink);border:1px solid var(--line);padding:26px;max-width:460px;width:92vw;max-height:92vh;overflow:auto;font-family:var(--serif)}
+  dialog::backdrop{background:#15181c88}
+  dialog h2{margin:0 0 4px;font-weight:400;font-size:28px;letter-spacing:.05em}
+  label{display:block;margin:12px 0 4px;color:var(--mute);font-size:16px}
+  input,select{width:100%;padding:9px;border:1px solid var(--line);background:#fff;color:var(--ink);font:inherit;font-size:18px;border-radius:2px}
+  small{color:var(--mute);display:block;margin-top:4px;line-height:1.35;font-size:15px}
+  #printArea{display:none}
+  @media print{
+    body>*:not(#printArea){display:none!important}
+    #printArea{display:block}
+    #printArea img{display:block;width:100%;height:auto;image-rendering:pixelated}
+    html,body{background:#fff;margin:0}
+  }
+  </style>
+  <style id="pageStyle">@page{margin:0}</style>
+  </head>
+  <body>
+  <div id="app">
+    <button id="gear" class="alt" title="Configuración" aria-label="Configuración">⚙</button>
+    <header>
+      <h1 id="title">Photobooth</h1>
+      <div class="rule"></div>
+      <p class="sub" id="sub">Un recuerdo de esta noche</p>
+    </header>
+    <div class="frame">
+      <div class="stage">
+        <video id="video" autoplay playsinline muted></video>
+        <canvas id="shot"></canvas>
+        <div id="count"></div>
+        <div id="flash"></div>
+      </div>
+    </div>
+    <div class="row" id="controls"></div>
+    <div id="msg"></div>
+  </div>
+
+  <div id="printArea"><img id="printImg" alt="Ticket"></div>
+  <canvas id="ticket" style="display:none"></canvas>
+  <div id="qrTmp" style="display:none"></div>
+
+  <dialog id="cfg">
+    <h2>Configuración</h2>
+    <label>Nombre del evento</label><input id="cEvent">
+    <label>Papel de la impresora</label>
+    <select id="cPaper">
+      <option value="640|80|145">Térmico 80 × 145 mm (203 dpi)</option>
+      <option value="945|80|145">Térmico 80 × 145 mm (300 dpi)</option>
+    </select>
+    <label>Tramado de la foto impresa</label>
+    <select id="cDither">
+      <option value="fs">Floyd–Steinberg (más detalle)</option>
+      <option value="atk">Atkinson (más contraste)</option>
+    </select>
+    <label>Brillo de la foto impresa</label>
+    <select id="cTone">
+      <option value="0.7">Más claro</option>
+      <option value="0.85">Normal</option>
+      <option value="1">Más oscuro</option>
+    </select>
+    <label>Cuenta regresiva (segundos)</label><input id="cSecs" type="number" min="1" max="10">
+    <label>URL del script de Google Drive</label><input id="cScript" placeholder="https://script.google.com/macros/s/.../exec">
+    <small>Guarda la foto y el PDF del ticket en Drive y genera el link del QR.</small>
+    <label>Servidor de impresión (Mac con la Zebra)</label><input id="cPrint" placeholder="https://mi-mac.local:8443/print">
+    <small>Vacío = imprime desde este mismo dispositivo con el diálogo del navegador.</small>
+    <label>API key de ImgBB (respaldo si no hay script)</label><input id="cKey">
+    <div class="row" style="margin-top:20px;min-height:0"><button id="cSave">Guardar</button><button id="cClose" class="alt">Cerrar</button></div>
+  </dialog>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script>
+  const $ = id => document.getElementById(id);
+  const DEFAULT_KEY = "56db7bd6e279757bd373883a2fe025cb";
+  const DEFAULT_PRINT = "https://MacBook-Pro-de-Federico.local:8443/print"; // ← opcional: URL del servidor de impresión, ej. https://mi-mac.local:8443/print
+  const DEFAULT_SCRIPT = "https://script.google.com/macros/s/AKfycbyPG3fev6Hc_1TkJJG3MkY7IPvnE6yO4Q8l8C5-zmpqN4uGplos7lAxvxeSwmVd-99FqA/exec"; // ← pegá acá la URL /exec de tu Google Apps Script
+  const DEF = {event:"Mi Evento", paper:"640|80|145", secs:3, key:DEFAULT_KEY, script:DEFAULT_SCRIPT, print:DEFAULT_PRINT, dither:"fs", tone:.85};
+  let cfg = {...DEF}, photoData = null, shotDate = new Date(), sid = 0;
+
+  try { Object.assign(cfg, JSON.parse(localStorage.getItem("pb_cfg") || "{}")); } catch(e){}
+  if (!cfg.key) cfg.key = DEFAULT_KEY;
+  if (!cfg.script) cfg.script = DEFAULT_SCRIPT;
+  if (!cfg.print) cfg.print = DEFAULT_PRINT;
+  if (!["640|80|145","945|80|145"].includes(cfg.paper)) cfg.paper = DEF.paper;
+  function saveCfg(){ try { localStorage.setItem("pb_cfg", JSON.stringify(cfg)); } catch(e){} }
+
+  const msg = t => $("msg").textContent = t || "";
+  const paper = () => cfg.paper.split("|").map(Number);
+  function controls(...btns){
+    const c = $("controls"); c.innerHTML = "";
+    btns.forEach(([label, fn, alt]) => {
+      const b = document.createElement("button");
+      b.textContent = label; if (alt) b.className = "alt"; b.onclick = fn; c.appendChild(b);
+    });
+  }
+
+  /* ---- Geometría del ticket (1 píxel = 1 punto de la impresora) ---- */
+  function layout(p){
+    const W = p[0], u = W / 640, S = n => Math.round(n * u);
+    return {W, u, S, H: S(1160), dpmm: W / p[1], pw: W, ph: W};
+  }
+
+  function applyCfg(){
+    $("title").textContent = cfg.event;
+    const p = paper(), L = layout(p);
+    $("pageStyle").textContent = `@page{size:${p[1]}mm ${(L.H / L.dpmm).toFixed(1)}mm;margin:0}`;
+    document.documentElement.style.setProperty("--ar", (L.pw / L.ph).toFixed(4));
+  }
+
+  /* ---- Cámara ---- */
+  async function startCamera(){
+    try {
+      const s = await navigator.mediaDevices.getUserMedia({video:{facingMode:"user",width:{ideal:1920},height:{ideal:1080}},audio:false});
+      $("video").srcObject = s;
+    } catch(e){ msg("No se pudo acceder a la cámara. Permití el acceso y recargá la página."); }
+  }
+
+  function home(){
+    sid++;
+    $("shot").style.display = "none"; $("video").style.display = "block";
+    $("sub").textContent = "Un recuerdo de esta noche";
+    photoData = null; msg("");
+    controls(["Tomar foto", startCountdown]);
+  }
+
+  function startCountdown(){
+    controls(); msg(""); $("sub").textContent = "Sonreí";
+    let n = cfg.secs; const c = $("count"); c.style.display = "flex"; c.textContent = n;
+    const t = setInterval(() => {
+      n--;
+      if (n <= 0){ clearInterval(t); c.style.display = "none"; capture(); }
+      else c.textContent = n;
+    }, 1000);
+  }
+
+  function capture(){
+    const v = $("video"), s = $("shot"), L = layout(paper()), ar = L.pw / L.ph;
+    const w = v.videoWidth || 1280, h = v.videoHeight || 720;
+    let sw = w, sh = w / ar; if (sh > h){ sh = h; sw = h * ar; }
+    s.width = Math.min(Math.round(sw), 2048); s.height = Math.round(s.width / ar);
+    const x = s.getContext("2d"); x.imageSmoothingQuality = "high";
+    x.save(); x.translate(s.width, 0); x.scale(-1, 1);
+    x.drawImage(v, (w - sw) / 2, (h - sh) / 2, sw, sh, 0, 0, s.width, s.height);
+    x.restore();
+    photoData = s.toDataURL("image/jpeg", .92); shotDate = new Date();
+    $("flash").classList.remove("on"); void $("flash").offsetWidth; $("flash").classList.add("on");
+    s.style.display = "block"; v.style.display = "none";
+    $("sub").textContent = "¿Te gusta cómo quedó?";
+    controls(["Imprimir", printFlow], ["Repetir", home, true]);
+  }
+
+  /* ---- Almacenamiento ---- */
+  async function driveUpload(b64, mime, name, share){
+    const r = await fetch(cfg.script, {method:"POST", headers:{"Content-Type":"text/plain;charset=utf-8"}, body:JSON.stringify({data:b64, mime, name, share})});
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.error || "Drive rechazó la subida");
+    return j.url;
+  }
+  async function imgbbUpload(b64){
+    const fd = new FormData(); fd.append("image", b64);
+    const r = await fetch("https://api.imgbb.com/1/upload?key=" + encodeURIComponent(cfg.key), {method:"POST", body:fd});
+    const j = await r.json();
+    if (!j.success) throw new Error("ImgBB rechazó la subida");
+    return j.data.url_viewer || j.data.url;
+  }
+  const pad2 = n => String(n).padStart(2, "0");
+  function fileBase(){
+    const d = shotDate, slug = cfg.event.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^\w]+/g, "-").replace(/^-|-$/g, "") || "photobooth";
+    return `${slug}_${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}_${pad2(d.getHours())}-${pad2(d.getMinutes())}-${pad2(d.getSeconds())}`;
+  }
+
+  /* ---- QR con módulos enteros (nítido en impresora) ---- */
+  function qrModules(text){
+    const box = $("qrTmp"); box.innerHTML = "";
+    const q = new QRCode(box, {text, width:64, height:64, correctLevel:QRCode.CorrectLevel.M}), m = q._oQRCode;
+    return {n: m.getModuleCount(), dark: (r, c) => m.isDark(r, c)};
+  }
+
+  /* ---- Tono + tramado ---- */
+  function toneAndDither(ctx, x0, y0, w, h){
+    const id = ctx.getImageData(x0, y0, w, h), d = id.data, n = w * h, g = new Float32Array(n), hist = new Uint32Array(256);
+    for (let i = 0; i < n; i++){ const v = .299 * d[i*4] + .587 * d[i*4+1] + .114 * d[i*4+2]; g[i] = v; hist[v | 0]++; }
+    let lo = 0, hi = 255, acc = 0;
+    while (lo < 254 && (acc += hist[lo]) < n * .01) lo++;
+    acc = 0; while (hi > 1 && (acc += hist[hi]) < n * .01) hi--;
+    if (hi - lo < 40){ lo = 0; hi = 255; }
+    for (let i = 0; i < n; i++) g[i] = 255 * Math.pow(Math.min(1, Math.max(0, (g[i] - lo) / (hi - lo))), cfg.tone);
+    const b = new Float32Array(n);  // desenfoque 3x3 para máscara de nitidez
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++){
+      let s = 0;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++)
+        s += g[Math.min(h-1, Math.max(0, y+dy)) * w + Math.min(w-1, Math.max(0, x+dx))];
+      b[y*w+x] = s / 9;
+    }
+    for (let i = 0; i < n; i++) g[i] = Math.min(255, Math.max(0, g[i] + .7 * (g[i] - b[i])));
+    const K = cfg.dither === "atk"
+      ? [[1,0,1/8],[2,0,1/8],[-1,1,1/8],[0,1,1/8],[1,1,1/8],[0,2,1/8]]
+      : [[1,0,7/16],[-1,1,3/16],[0,1,5/16],[1,1,1/16]];
+    for (let y = 0; y < h; y++){
+      const dir = y % 2 ? -1 : 1;
+      for (let k = 0; k < w; k++){
+        const x = dir > 0 ? k : w - 1 - k, i = y * w + x, o = g[i], nv = o < 128 ? 0 : 255, e = o - nv;
+        g[i] = nv;
+        for (const [dx, dy, wt] of K){ const xx = x + dx * dir, yy = y + dy; if (xx >= 0 && xx < w && yy < h) g[yy*w+xx] += e * wt; }
+      }
+    }
+    for (let i = 0; i < n; i++){ d[i*4] = d[i*4+1] = d[i*4+2] = g[i]; d[i*4+3] = 255; }
+    ctx.putImageData(id, x0, y0);
+  }
+
+  /* ---- Ticket ---- */
+  const MONO = '"Courier New", Courier, "Hiragino Kaku Gothic ProN", "Hiragino Sans", "Yu Gothic", monospace';
+
+  function nextNo(){
+    try { const n = (parseInt(localStorage.getItem("pb_no")) || 0) + 1; localStorage.setItem("pb_no", n); return String(n).padStart(4, "0"); }
+    catch(e){ return pad2(shotDate.getMinutes()) + pad2(shotDate.getSeconds()); }
+  }
+
+  // Fecha estilo cámara analógica: dígitos de 7 segmentos, inclinados, blancos con contorno negro
+  function stamp(x, text, ox, oy, S){
+    const dw = S(26), dh = S(46), t = S(7), sp = S(14), o = S(2.5);
+    const MAP = {0:"abcdef",1:"bc",2:"abdeg",3:"abcdg",4:"bcfg",5:"acdfg",6:"acdefg",7:"abc",8:"abcdefg",9:"abcdfg"};
+    const hl = dw - t * .5, vl = dh / 2 - t * .5;
+    const hz = (cx, cy) => [[cx-hl/2,cy],[cx-hl/2+t/2,cy-t/2],[cx+hl/2-t/2,cy-t/2],[cx+hl/2,cy],[cx+hl/2-t/2,cy+t/2],[cx-hl/2+t/2,cy+t/2]];
+    const vt = (cx, cy) => [[cx,cy-vl/2],[cx+t/2,cy-vl/2+t/2],[cx+t/2,cy+vl/2-t/2],[cx,cy+vl/2],[cx-t/2,cy+vl/2-t/2],[cx-t/2,cy-vl/2+t/2]];
+    const pos = {a:[dw/2,0,hz], g:[dw/2,dh/2,hz], d:[dw/2,dh,hz], f:[0,dh/4,vt], b:[dw,dh/4,vt], e:[0,dh*3/4,vt], c:[dw,dh*3/4,vt]};
+    const polys = []; let cx = 0;
+    for (const ch of text){
+      if (ch === " "){ cx += dw * .6; continue; }
+      if (ch === "'"){ polys.push([[cx+t*.6,0],[cx+t*1.7,0],[cx+t*.9,dh*.3],[cx-t*.2,dh*.3]]); cx += t * 2.4; continue; }
+      for (const s of MAP[ch]){ const [sx, sy, f] = pos[s]; polys.push(f(cx + sx, sy)); }
+      cx += dw + sp;
+    }
+    const path = pg => { x.beginPath(); pg.forEach(([a, b], i) => i ? x.lineTo(a, b) : x.moveTo(a, b)); x.closePath(); };
+    x.save(); x.translate(ox + t, oy); x.transform(1, 0, -.14, 1, 0, 0);
+    x.lineJoin = "round"; x.fillStyle = "#000"; x.strokeStyle = "#000"; x.lineWidth = o * 2;
+    polys.forEach(pg => { path(pg); x.fill(); x.stroke(); });
+    x.fillStyle = "#fff"; polys.forEach(pg => { path(pg); x.fill(); });
+    x.restore();
+  }
+
+  async function buildTicket(url){
+    const L = layout(paper()), {W, H, S} = L, pad = S(34), no = nextNo(), d = shotDate;
+    const c = $("ticket"); c.width = W; c.height = H;
+    const x = c.getContext("2d"); x.imageSmoothingQuality = "high";
+    x.fillStyle = "#fff"; x.fillRect(0, 0, W, H);
+    x.fillStyle = "#000"; x.strokeStyle = "#000"; x.textBaseline = "middle";
+    const T = (s, xx, yy, size, o = {}) => {
+      x.font = `${o.b ? "bold " : ""}${size}px ${MONO}`; x.textAlign = o.a || "left"; x.letterSpacing = (o.k || 0) + "px";
+      x.fillText(s, xx, yy, o.m); x.letterSpacing = "0px";
+    };
+    const dash = (yy, w, dd, x1 = pad, x2 = W - pad) => {
+      x.save(); x.lineWidth = S(w); x.setLineDash(dd.map(S)); x.beginPath(); x.moveTo(x1, yy); x.lineTo(x2, yy); x.stroke(); x.restore();
+    };
+
+    // encabezado
+    T("✂", pad, S(10), S(16)); dash(S(10), 2, [8, 6], pad + S(26));
+    const title = cfg.event.toUpperCase(); let fs = S(46);
+    x.textAlign = "center"; x.letterSpacing = S(6) + "px";
+    do { x.font = `bold ${fs}px ${MONO}`; fs--; } while (x.measureText(title).width > W - 2 * pad && fs > 10);
+    x.fillText(title, W / 2, S(46)); x.letterSpacing = "0px";
+    T("RECEIPT No." + no, pad, S(82), S(17));
+    T("写真レシート", W - pad, S(82), S(17), {a: "right"});
+
+    // foto: ancho completo, 1:1
+    const py = S(96), img = new Image(); img.src = photoData; await img.decode();
+    const iw = img.naturalWidth, ih = img.naturalHeight, side = Math.min(iw, ih);
+    x.drawImage(img, (iw - side) / 2, (ih - side) / 2, side, side, 0, py, W, W);
+    toneAndDither(x, 0, py, W, W);
+    stamp(x, `${pad2(d.getDate())} ${pad2(d.getMonth() + 1)} '${String(d.getFullYear()).slice(2)}`, S(26), py + S(24), S);
+
+    // pie tipo recibo
+    const y0 = py + W + S(12);
+    dash(y0, 2, [10, 6]);
+    const qm = qrModules(url), mod = Math.max(3, Math.round(.4 * L.dpmm)), qs = (qm.n + 4) * mod;
+    const qx = W - pad - qs, qy = y0 + S(14);
+    x.fillStyle = "#fff"; x.fillRect(qx, qy, qs, qs); x.fillStyle = "#000";
+    for (let r = 0; r < qm.n; r++) for (let cc = 0; cc < qm.n; cc++)
+      if (qm.dark(r, cc)) x.fillRect(qx + (cc + 2) * mod, qy + (r + 2) * mod, mod, mod);
+    T("SCAN 読み取り", qx + qs / 2, qy + qs + S(14), S(15), {a: "center", b: true, m: qs + S(20)});
+
+    const lx = pad, cw = qx - S(18) - lx;
+    const leader = (l, r, yy) => {
+      x.font = `${S(22)}px ${MONO}`; x.textAlign = "left";
+      const wl = x.measureText(l).width, wr = x.measureText(r).width, wd = x.measureText(".").width;
+      x.fillText(l, lx, yy); x.textAlign = "right"; x.fillText(r, lx + cw, yy);
+      x.textAlign = "left"; x.fillText(".".repeat(Math.max(0, Math.floor((cw - wl - wr - S(14)) / wd))), lx + wl + S(7), yy);
+    };
+    let ly = y0 + S(26);
+    leader("DATE 日付", `${pad2(d.getDate())}.${pad2(d.getMonth() + 1)}.${d.getFullYear()}`, ly); ly += S(28);
+    leader("TIME 時刻", `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`, ly); ly += S(28);
+    leader("No. 番号", no, ly); ly += S(28);
+    dash(ly, 1.5, [4, 4], lx, lx + cw); ly += S(28);
+    leader("PHOTO 写真", "x1", ly); ly += S(28);
+    leader("MEMORY 思い出", "∞", ly);
+
+    x.save(); x.translate(S(16), y0 + S(100)); x.rotate(-Math.PI / 2);
+    T("PHOTO RECEIPT 写真", 0, 0, S(14), {a: "center", m: S(170)}); x.restore();
+
+    // total
+    const yt = y0 + S(196);
+    x.fillRect(pad, yt, W - 2 * pad, S(3));
+    T("合計 TOTAL", pad, yt + S(36), S(32), {b: true});
+    T("¥0", W - pad, yt + S(36), S(56), {a: "right", b: true});
+
+    // código de barras decorativo
+    const yb = yt + S(78); let sd = (parseInt(no) * 9973 + d.getTime() % 100000) >>> 0;
+    const rnd = () => { sd |= 0; sd = sd + 0x6D2B79F5 | 0; let z = Math.imul(sd ^ sd >>> 15, 1 | sd); z = z + Math.imul(z ^ z >>> 7, 61 | z) ^ z; return ((z ^ z >>> 14) >>> 0) / 4294967296; };
+    for (let bx = pad, on = true; bx < W - pad; on = !on){
+      const bw = S(2) * (1 + (rnd() * 4 | 0));
+      if (on) x.fillRect(bx, yb, Math.min(bw, W - pad - bx), S(52));
+      bx += bw;
+    }
+    T(`*${no}${pad2(d.getHours())}${pad2(d.getMinutes())}${pad2(d.getSeconds())}*`, W / 2, yb + S(66), S(15), {a: "center", k: S(4)});
+    T("THANK YOU * ありがとうございました", W / 2, yt + S(176), S(19), {a: "center", m: W - 2 * pad});
+    T("✂", pad, S(1148), S(16)); dash(S(1148), 2, [8, 6], pad + S(26));
+
+    // 1 bit: texto y líneas nítidos para la impresora térmica
+    const id = x.getImageData(0, 0, W, H), pd = id.data;
+    for (let i = 0; i < pd.length; i += 4){
+      const v = (pd[i] * .299 + pd[i+1] * .587 + pd[i+2] * .114) < 150 ? 0 : 255;
+      pd[i] = pd[i+1] = pd[i+2] = v; pd[i+3] = 255;
+    }
+    x.putImageData(id, 0, 0);
+    return c.toDataURL("image/png");
+  }
+
+  async function savePdf(png, name){
+    const L = layout(paper()), wmm = paper()[1], hmm = L.H / L.dpmm;
+    const pdf = new window.jspdf.jsPDF({unit:"mm", format:[wmm, hmm], orientation: hmm > wmm ? "portrait" : "landscape", compress:true});
+    pdf.addImage(png, "PNG", 0, 0, wmm, hmm, undefined, "FAST");
+    await driveUpload(pdf.output("datauristring").split(",")[1], "application/pdf", name + ".pdf", false);
+  }
+
+  /* ---- ZPL: el ticket de 1 bit se envía píxel por píxel a la Zebra ---- */
+  function toZpl(c){
+    const W = c.width, H = c.height, bpr = Math.ceil(W / 8), d = c.getContext("2d").getImageData(0, 0, W, H).data, rows = [];
+    for (let y = 0; y < H; y++){
+      let row = "";
+      for (let bx = 0; bx < bpr; bx++){
+        let b = 0;
+        for (let k = 0; k < 8; k++){ const xx = bx * 8 + k; if (xx < W && d[(y * W + xx) * 4] < 128) b |= 0x80 >> k; }
+        row += (b < 16 ? "0" : "") + b.toString(16);
+      }
+      rows.push(row);
+    }
+    const n = bpr * H;
+    return `^XA^CI28^MTD^MNN^PW${W}^LL${H}^LH0,0^PON^FO0,0^GFA,${n},${n},${bpr},${rows.join("").toUpperCase()}^FS^XZ`;
+  }
+
+  let lastPng = null, lastZpl = null;
+  async function doPrint(){
+    if (cfg.print){
+      const r = await fetch(cfg.print, {method:"POST", headers:{"Content-Type":"text/plain;charset=utf-8"}, body:lastZpl});
+      const j = await r.json();
+      if (!j.ok) throw new Error(j.error || "la impresora rechazó el trabajo");
+    } else {
+      await new Promise(res => { const pi = $("printImg"); pi.onload = () => setTimeout(() => { window.print(); res(); }, 150); pi.src = lastPng; });
+    }
+  }
+  async function printOut(){
+    controls(); msg("Imprimiendo tu ticket…");
+    try {
+      await doPrint();
+      $("sub").textContent = "Gracias por ser parte";
+      controls(["Nueva foto", home], ["Reimprimir", printOut, true]);
+    } catch(e){
+      msg("No se pudo imprimir: " + e.message);
+      controls(["Reintentar impresión", printOut], ["Nueva foto", home, true]);
+    }
+  }
+
+  async function printFlow(){
+    controls(); const my = sid, name = fileBase();
+    try {
+      msg("Guardando tu foto…");
+      const b64 = photoData.split(",")[1];
+      const url = cfg.script ? await driveUpload(b64, "image/jpeg", name + ".jpg", true) : await imgbbUpload(b64);
+      msg("Preparando el ticket…");
+      lastPng = await buildTicket(url); lastZpl = toZpl($("ticket"));
+      if (cfg.script) savePdf(lastPng, name)
+        .then(() => { if (sid === my) msg("Ticket impreso y guardado en Drive ✓"); })
+        .catch(() => { if (sid === my) msg("Ticket impreso, pero no se pudo guardar el PDF en Drive"); });
+    } catch(e){
+      msg("Error: " + e.message + ". Revisá la conexión y la configuración.");
+      controls(["Reintentar", printFlow], ["Repetir foto", home, true]);
+      return;
+    }
+    printOut();
+  }
+
+  /* ---- Configuración ---- */
+  $("gear").onclick = () => {
+    $("cEvent").value = cfg.event; $("cPaper").value = cfg.paper; if (!$("cPaper").value) $("cPaper").selectedIndex = 0;
+    $("cDither").value = cfg.dither; $("cTone").value = String(cfg.tone); if (!$("cTone").value) $("cTone").value = "0.85";
+    $("cSecs").value = cfg.secs; $("cScript").value = cfg.script; $("cPrint").value = cfg.print; $("cKey").value = cfg.key;
+    $("cfg").showModal();
+  };
+  $("cClose").onclick = () => $("cfg").close();
+  $("cSave").onclick = () => {
+    cfg.event = $("cEvent").value.trim() || DEF.event;
+    cfg.paper = $("cPaper").value; cfg.dither = $("cDither").value; cfg.tone = parseFloat($("cTone").value);
+    cfg.secs = Math.max(1, Math.min(10, parseInt($("cSecs").value) || 3));
+    cfg.script = $("cScript").value.trim(); cfg.print = $("cPrint").value.trim(); cfg.key = $("cKey").value.trim() || DEFAULT_KEY;
+    saveCfg(); applyCfg(); $("cfg").close();
+  };
+
+  applyCfg(); startCamera(); home();
+  </script>
+  </body>
+  </html>
+  $("cfg").showModal();
+};
+$("cClose").onclick = () => $("cfg").close();
+$("cSave").onclick = () => {
+  cfg.event = $("cEvent").value.trim() || DEF.event;
+  cfg.paper = $("cPaper").value; cfg.dither = $("cDither").value; cfg.tone = parseFloat($("cTone").value);
+  cfg.secs = Math.max(1, Math.min(10, parseInt($("cSecs").value) || 3));
+  cfg.script = $("cScript").value.trim(); cfg.print = $("cPrint").value.trim(); cfg.key = $("cKey").value.trim() || DEFAULT_KEY;
+  saveCfg(); applyCfg(); $("cfg").close();
+};
+
+applyCfg(); startCamera(); home();
+</script>
+</body>
+</html>
 let cfg = {...DEF}, photoData = null, shotDate = new Date(), sid = 0;
 
 try { Object.assign(cfg, JSON.parse(localStorage.getItem("pb_cfg") || "{}")); } catch(e){}

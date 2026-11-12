@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Photobooth</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;1,300;1,400&display=swap" rel="stylesheet">
+<style>
+:root{--paper:#f2f1ee;--card:#fbfaf8;--ink:#15181c;--brass:#9c7f4e;--line:#d6d3cb;--mute:#7b7a76;--ar:1.2;
+  --serif:"Cormorant Garamond",Georgia,"Times New Roman",serif}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;background:var(--paper);color:var(--ink);font-family:var(--serif)}
+#app{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:clamp(12px,2.4vh,26px);padding:18px;position:relative}
+header{text-align:center}
+h1{margin:0;font-weight:300;font-size:clamp(34px,6.4vw,76px);letter-spacing:.06em;line-height:1.05}
+.rule{width:56px;height:1px;background:var(--brass);margin:12px auto 10px}
+.sub{margin:0;font-style:italic;font-weight:300;color:var(--mute);font-size:clamp(16px,2.2vw,24px);letter-spacing:.04em}
+.frame{background:var(--card);padding:clamp(8px,1.6vw,16px);border:1px solid var(--line);box-shadow:0 30px 60px -40px #15181c55}
+.stage{position:relative;width:min(88vw,calc(54vh*var(--ar)));aspect-ratio:var(--ar);background:#0d0f11;overflow:hidden}
+video,#shot{width:100%;height:100%;object-fit:cover;display:block}
+video{transform:scaleX(-1)}
+#shot{display:none}
+#count{position:absolute;inset:0;display:none;align-items:center;justify-content:center;font-size:min(30vw,250px);font-weight:300;color:#fff;text-shadow:0 4px 40px #0008}
+#flash{position:absolute;inset:0;background:#fff;opacity:0;pointer-events:none}
+#flash.on{animation:fl .6s ease-out}
+@keyframes fl{0%{opacity:1}100%{opacity:0}}
+.row{display:flex;gap:14px;flex-wrap:wrap;justify-content:center;min-height:56px}
+button{font-family:var(--serif);font-size:clamp(18px,2.4vw,24px);font-weight:500;letter-spacing:.1em;border:1px solid var(--ink);background:var(--ink);color:var(--paper);padding:14px 44px;cursor:pointer;border-radius:2px;transition:background .2s,color .2s}
+button:hover{background:var(--brass);border-color:var(--brass)}
+button.alt{background:transparent;color:var(--ink)}
+button.alt:hover{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+button:focus-visible{outline:2px solid var(--brass);outline-offset:3px}
+#msg{min-height:1.5em;color:var(--mute);text-align:center;font-size:clamp(15px,1.8vw,20px);font-style:italic}
+#gear{position:absolute;top:12px;right:14px;padding:6px 12px;font-size:18px;border-color:transparent;color:var(--mute);letter-spacing:0}
+#gear:hover{background:transparent;color:var(--brass);border-color:transparent}
+dialog{background:var(--card);color:var(--ink);border:1px solid var(--line);padding:26px;max-width:460px;width:92vw;max-height:92vh;overflow:auto;font-family:var(--serif)}
+dialog::backdrop{background:#15181c88}
+dialog h2{margin:0 0 4px;font-weight:400;font-size:28px;letter-spacing:.05em}
+label{display:block;margin:12px 0 4px;color:var(--mute);font-size:16px}
+input,select{width:100%;padding:9px;border:1px solid var(--line);background:#fff;color:var(--ink);font:inherit;font-size:18px;border-radius:2px}
+small{color:var(--mute);display:block;margin-top:4px;line-height:1.35;font-size:15px}
+#printArea{display:none}
+@media print{
+  body>*:not(#printArea){display:none!important}
+  #printArea{display:block}
+  #printArea img{display:block;width:100%;height:auto;image-rendering:pixelated}
+  html,body{background:#fff;margin:0}
+}
+</style>
+<style id="pageStyle">@page{margin:0}</style>
+</head>
+<body>
+<div id="app">
+  <button id="gear" class="alt" title="Configuración" aria-label="Configuración">⚙</button>
+  <header>
+    <h1 id="title">Photobooth</h1>
+    <div class="rule"></div>
+    <p class="sub" id="sub">Un recuerdo de esta noche</p>
+  </header>
+  <div class="frame">
+    <div class="stage">
+      <video id="video" autoplay playsinline muted></video>
+      <canvas id="shot"></canvas>
+      <div id="count"></div>
+      <div id="flash"></div>
+    </div>
+  </div>
+  <div class="row" id="controls"></div>
+  <div id="msg"></div>
+</div>
+
+<div id="printArea"><img id="printImg" alt="Ticket"></div>
+<canvas id="ticket" style="display:none"></canvas>
+<div id="qrTmp" style="display:none"></div>
+
+<dialog id="cfg">
+  <h2>Configuración</h2>
+  <label>Nombre del evento</label><input id="cEvent">
+  <label>Papel de la impresora</label>
+  <select id="cPaper">
+    <option value="640|80|100">Térmico 80 × 100 mm (203 dpi)</option>
+    <option value="945|80|100">Térmico 80 × 100 mm (300 dpi)</option>
+    <option value="640|80|140">Térmico 80 × 140 mm (203 dpi)</option>
+    <option value="812|101.6|152.4">Zebra 4x6" (203 dpi)</option>
+    <option value="1218|101.6|152.4">Zebra 4x6" (300 dpi)</option>
+  </select>
+  <label>Tramado de la foto impresa</label>
+  <select id="cDither">
+    <option value="fs">Floyd–Steinberg (más detalle)</option>
+    <option value="atk">Atkinson (más contraste)</option>
+  </select>
+  <label>Brillo de la foto impresa</label>
+  <select id="cTone">
+    <option value="0.7">Más claro</option>
+    <option value="0.85">Normal</option>
+    <option value="1">Más oscuro</option>
+  </select>
+  <label>Cuenta regresiva (segundos)</label><input id="cSecs" type="number" min="1" max="10">
+  <label>URL del script de Google Drive</label><input id="cScript" placeholder="https://script.google.com/macros/s/.../exec">
+  <small>Guarda la foto y el PDF del ticket en Drive y genera el link del QR.</small>
+  <label>API key de ImgBB (respaldo si no hay script)</label><input id="cKey">
+  <div class="row" style="margin-top:20px;min-height:0"><button id="cSave">Guardar</button><button id="cClose" class="alt">Cerrar</button></div>
+</dialog>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+const DEFAULT_KEY = "56db7bd6e279757bd373883a2fe025cb";
+const DEFAULT_SCRIPT = "https://script.google.com/macros/s/AKfycbyPG3fev6Hc_1TkJJG3MkY7IPvnE6yO4Q8l8C5-zmpqN4uGplos7lAxvxeSwmVd-99FqA/exec"; // ← pegá acá la URL /exec de tu Google Apps Script
+const DEF = {event:"Mi Evento", paper:"640|80|100", secs:3, key:DEFAULT_KEY, script:DEFAULT_SCRIPT, dither:"fs", tone:.85};
+let cfg = {...DEF}, photoData = null, shotDate = new Date(), sid = 0;
+
+try { Object.assign(cfg, JSON.parse(localStorage.getItem("pb_cfg") || "{}")); } catch(e){}
+if (!cfg.key) cfg.key = DEFAULT_KEY;
+if (!cfg.script) cfg.script = DEFAULT_SCRIPT;
+function saveCfg(){ try { localStorage.setItem("pb_cfg", JSON.stringify(cfg)); } catch(e){} }
+
+const msg = t => $("msg").textContent = t || "";
+const paper = () => cfg.paper.split("|").map(Number);
+function controls(...btns){
+  const c = $("controls"); c.innerHTML = "";
+  btns.forEach(([label, fn, alt]) => {
+    const b = document.createElement("button");
+    b.textContent = label; if (alt) b.className = "alt"; b.onclick = fn; c.appendChild(b);
+  });
+}
+
+/* ---- Geometría del ticket (1 píxel = 1 punto de la impresora) ---- */
+function layout(p){
+  const W = p[0], dpmm = W / p[1];
+  const m = Math.round(W * .03), ip = Math.round(W * .045), g = Math.round(W * .035);
+  const titleH = Math.round(W * .085), mod0 = Math.max(3, Math.round(.4 * dpmm)), qrBox = 41 * mod0;
+  const pw = W - 2 * m - 2 * ip, fixedParts = 2 * m + 2 * ip + g + titleH + g + qrBox;
+  const fixedH = p[2] ? Math.round(p[2] * dpmm) : 0;
+  const ph = fixedH ? Math.round(Math.max(pw * .6, Math.min(pw * 1.05, fixedH - fixedParts))) : Math.round(pw * .85);
+  return {W, H: fixedH || fixedParts + ph, dpmm, m, ip, g, titleH, qrBox, pw, ph, lw: Math.max(2, Math.round(W * .004))};
+}
+
+function applyCfg(){
+  $("title").textContent = cfg.event;
+  const p = paper(), L = layout(p);
+  $("pageStyle").textContent = `@page{size:${p[1]}mm ${p[2] ? p[2] + "mm" : "auto"};margin:0}`;
+  document.documentElement.style.setProperty("--ar", (L.pw / L.ph).toFixed(4));
+}
+
+/* ---- Cámara ---- */
+async function startCamera(){
+  try {
+    const s = await navigator.mediaDevices.getUserMedia({video:{facingMode:"user",width:{ideal:1920},height:{ideal:1080}},audio:false});
+    $("video").srcObject = s;
+  } catch(e){ msg("No se pudo acceder a la cámara. Permití el acceso y recargá la página."); }
+}
+
+function home(){
+  sid++;
+  $("shot").style.display = "none"; $("video").style.display = "block";
+  $("sub").textContent = "Un recuerdo de esta noche";
+  photoData = null; msg("");
+  controls(["Tomar foto", startCountdown]);
+}
+
+function startCountdown(){
+  controls(); msg(""); $("sub").textContent = "Sonreí";
+  let n = cfg.secs; const c = $("count"); c.style.display = "flex"; c.textContent = n;
+  const t = setInterval(() => {
+    n--;
+    if (n <= 0){ clearInterval(t); c.style.display = "none"; capture(); }
+    else c.textContent = n;
+  }, 1000);
+}
+
+function capture(){
+  const v = $("video"), s = $("shot"), L = layout(paper()), ar = L.pw / L.ph;
+  const w = v.videoWidth || 1280, h = v.videoHeight || 720;
+  let sw = w, sh = w / ar; if (sh > h){ sh = h; sw = h * ar; }
+  s.width = Math.min(Math.round(sw), 2048); s.height = Math.round(s.width / ar);
+  const x = s.getContext("2d"); x.imageSmoothingQuality = "high";
+  x.save(); x.translate(s.width, 0); x.scale(-1, 1);
+  x.drawImage(v, (w - sw) / 2, (h - sh) / 2, sw, sh, 0, 0, s.width, s.height);
+  x.restore();
+  photoData = s.toDataURL("image/jpeg", .92); shotDate = new Date();
+  $("flash").classList.remove("on"); void $("flash").offsetWidth; $("flash").classList.add("on");
+  s.style.display = "block"; v.style.display = "none";
+  $("sub").textContent = "¿Te gusta cómo quedó?";
+  controls(["Imprimir", printFlow], ["Repetir", home, true]);
+}
+
+/* ---- Almacenamiento ---- */
+async function driveUpload(b64, mime, name, share){
+  const r = await fetch(cfg.script, {method:"POST", headers:{"Content-Type":"text/plain;charset=utf-8"}, body:JSON.stringify({data:b64, mime, name, share})});
+  const j = await r.json();
+  if (!j.ok) throw new Error(j.error || "Drive rechazó la subida");
+  return j.url;
+}
+async function imgbbUpload(b64){
+  const fd = new FormData(); fd.append("image", b64);
+  const r = await fetch("https://api.imgbb.com/1/upload?key=" + encodeURIComponent(cfg.key), {method:"POST", body:fd});
+  const j = await r.json();
+  if (!j.success) throw new Error("ImgBB rechazó la subida");
+  return j.data.url_viewer || j.data.url;
+}
+const pad2 = n => String(n).padStart(2, "0");
+function fileBase(){
+  const d = shotDate, slug = cfg.event.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^\w]+/g, "-").replace(/^-|-$/g, "") || "photobooth";
+  return `${slug}_${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}_${pad2(d.getHours())}-${pad2(d.getMinutes())}-${pad2(d.getSeconds())}`;
+}
+
+/* ---- QR con módulos enteros (nítido en impresora) ---- */
+function qrModules(text){
+  const box = $("qrTmp"); box.innerHTML = "";
+  const q = new QRCode(box, {text, width:64, height:64, correctLevel:QRCode.CorrectLevel.M}), m = q._oQRCode;
+  return {n: m.getModuleCount(), dark: (r, c) => m.isDark(r, c)};
+}
+
+/* ---- Tono + tramado ---- */
+function toneAndDither(ctx, x0, y0, w, h){
+  const id = ctx.getImageData(x0, y0, w, h), d = id.data, n = w * h, g = new Float32Array(n), hist = new Uint32Array(256);
+  for (let i = 0; i < n; i++){ const v = .299 * d[i*4] + .587 * d[i*4+1] + .114 * d[i*4+2]; g[i] = v; hist[v | 0]++; }
+  let lo = 0, hi = 255, acc = 0;
+  while (lo < 254 && (acc += hist[lo]) < n * .01) lo++;
+  acc = 0; while (hi > 1 && (acc += hist[hi]) < n * .01) hi--;
+  if (hi - lo < 40){ lo = 0; hi = 255; }
+  for (let i = 0; i < n; i++) g[i] = 255 * Math.pow(Math.min(1, Math.max(0, (g[i] - lo) / (hi - lo))), cfg.tone);
+  const b = new Float32Array(n);  // desenfoque 3x3 para máscara de nitidez
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++){
+    let s = 0;
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++)
+      s += g[Math.min(h-1, Math.max(0, y+dy)) * w + Math.min(w-1, Math.max(0, x+dx))];
+    b[y*w+x] = s / 9;
+  }
+  for (let i = 0; i < n; i++) g[i] = Math.min(255, Math.max(0, g[i] + .7 * (g[i] - b[i])));
+  const K = cfg.dither === "atk"
+    ? [[1,0,1/8],[2,0,1/8],[-1,1,1/8],[0,1,1/8],[1,1,1/8],[0,2,1/8]]
+    : [[1,0,7/16],[-1,1,3/16],[0,1,5/16],[1,1,1/16]];
+  for (let y = 0; y < h; y++){
+    const dir = y % 2 ? -1 : 1;
+    for (let k = 0; k < w; k++){
+      const x = dir > 0 ? k : w - 1 - k, i = y * w + x, o = g[i], nv = o < 128 ? 0 : 255, e = o - nv;
+      g[i] = nv;
+      for (const [dx, dy, wt] of K){ const xx = x + dx * dir, yy = y + dy; if (xx >= 0 && xx < w && yy < h) g[yy*w+xx] += e * wt; }
+    }
+  }
+  for (let i = 0; i < n; i++){ d[i*4] = d[i*4+1] = d[i*4+2] = g[i]; d[i*4+3] = 255; }
+  ctx.putImageData(id, x0, y0);
+}
+
+/* ---- Ticket ---- */
+async function buildTicket(url){
+  const L = layout(paper()), {W, H, m, ip, g, titleH, qrBox, pw, ph, lw} = L;
+  const c = $("ticket"); c.width = W; c.height = H;
+  const x = c.getContext("2d"); x.imageSmoothingQuality = "high";
+  x.fillStyle = "#fff"; x.fillRect(0, 0, W, H);
+  x.strokeStyle = "#000"; x.lineWidth = lw; x.strokeRect(m, m, W - 2*m, H - 2*m);
+
+  const used = 2*m + 2*ip + g + titleH + g + qrBox + ph, off = Math.max(0, Math.floor((H - used) / 2));
+  const px = m + ip, py = m + ip + off;
+
+  const img = new Image(); img.src = photoData; await img.decode();
+  const ia = pw / ph, iw = img.naturalWidth, ih = img.naturalHeight;
+  let sw = iw, sh = iw / ia; if (sh > ih){ sh = ih; sw = ih * ia; }
+  x.drawImage(img, (iw - sw) / 2, (ih - sh) / 2, sw, sh, px, py, pw, ph);
+  toneAndDither(x, px, py, pw, ph);
+  x.strokeRect(px, py, pw, ph);
+
+  // marca de agua con la fecha (después del tramado para que quede nítida)
+  const dt = shotDate.toLocaleDateString("es-AR", {day:"2-digit", month:"2-digit", year:"numeric"});
+  const wf = Math.round(W * .036);
+  x.font = `bold ${wf}px "Courier New", monospace`; x.textAlign = "left"; x.textBaseline = "top";
+  x.lineJoin = "round"; x.lineWidth = Math.round(wf * .4); x.strokeStyle = "#fff";
+  x.strokeText(dt, px + wf * .6, py + wf * .5);
+  x.fillStyle = "#000"; x.fillText(dt, px + wf * .6, py + wf * .5);
+
+  // título
+  const t = cfg.event.toUpperCase(); let fs = Math.round(W * .06);
+  x.textAlign = "center"; x.textBaseline = "middle"; x.letterSpacing = Math.round(W * .008) + "px";
+  do { x.font = `${fs}px Georgia, "Times New Roman", serif`; fs--; } while (x.measureText(t).width > pw && fs > 10);
+  x.fillText(t, W / 2, py + ph + g + titleH / 2);
+  x.letterSpacing = "0px";
+
+  // QR pequeño con módulos enteros
+  const qm = qrModules(url), mod = Math.max(3, Math.floor(qrBox / (qm.n + 4))), qs = (qm.n + 4) * mod;
+  const qx = Math.round((W - qs) / 2), qy = py + ph + g + titleH + g + Math.round((qrBox - qs) / 2);
+  x.fillStyle = "#fff"; x.fillRect(qx, qy, qs, qs); x.fillStyle = "#000";
+  for (let r = 0; r < qm.n; r++) for (let cc = 0; cc < qm.n; cc++)
+    if (qm.dark(r, cc)) x.fillRect(qx + (cc + 2) * mod, qy + (r + 2) * mod, mod, mod);
+  return c.toDataURL("image/png");
+}
+
+async function savePdf(png, name){
+  const L = layout(paper()), wmm = paper()[1], hmm = L.H / L.dpmm;
+  const pdf = new window.jspdf.jsPDF({unit:"mm", format:[wmm, hmm], orientation: hmm > wmm ? "portrait" : "landscape", compress:true});
+  pdf.addImage(png, "PNG", 0, 0, wmm, hmm, undefined, "FAST");
+  await driveUpload(pdf.output("datauristring").split(",")[1], "application/pdf", name + ".pdf", false);
+}
+
+async function printFlow(){
+  controls(); const my = sid, name = fileBase();
+  try {
+    msg("Guardando tu foto…");
+    const b64 = photoData.split(",")[1];
+    const url = cfg.script ? await driveUpload(b64, "image/jpeg", name + ".jpg", true) : await imgbbUpload(b64);
+    msg("Preparando el ticket…");
+    const png = await buildTicket(url);
+    if (cfg.script) savePdf(png, name)
+      .then(() => { if (sid === my) msg("Ticket impreso y guardado en Drive ✓"); })
+      .catch(() => { if (sid === my) msg("Ticket impreso, pero no se pudo guardar el PDF en Drive"); });
+    const pi = $("printImg");
+    pi.onload = () => { msg("Imprimiendo tu ticket…"); setTimeout(() => window.print(), 150); };
+    pi.src = png;
+  } catch(e){
+    msg("Error: " + e.message + ". Revisá la conexión y la configuración.");
+    controls(["Reintentar", printFlow], ["Repetir foto", home, true]);
+    return;
+  }
+  $("sub").textContent = "Gracias por ser parte";
+  controls(["Nueva foto", home], ["Reimprimir", () => window.print(), true]);
+}
+
+/* ---- Configuración ---- */
+$("gear").onclick = () => {
+  $("cEvent").value = cfg.event; $("cPaper").value = cfg.paper; if (!$("cPaper").value) $("cPaper").selectedIndex = 0;
+  $("cDither").value = cfg.dither; $("cTone").value = String(cfg.tone); if (!$("cTone").value) $("cTone").value = "0.85";
+  $("cSecs").value = cfg.secs; $("cScript").value = cfg.script; $("cKey").value = cfg.key;
+  $("cfg").showModal();
+};
+$("cClose").onclick = () => $("cfg").close();
+$("cSave").onclick = () => {
+  cfg.event = $("cEvent").value.trim() || DEF.event;
+  cfg.paper = $("cPaper").value; cfg.dither = $("cDither").value; cfg.tone = parseFloat($("cTone").value);
+  cfg.secs = Math.max(1, Math.min(10, parseInt($("cSecs").value) || 3));
+  cfg.script = $("cScript").value.trim(); cfg.key = $("cKey").value.trim() || DEFAULT_KEY;
+  saveCfg(); applyCfg(); $("cfg").close();
+};
+
+applyCfg(); startCamera(); home();
+</script>
+</body>
+</html>

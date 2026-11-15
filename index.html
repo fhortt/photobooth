@@ -83,6 +83,9 @@ small{color:var(--mute);display:block;margin-top:4px;line-height:1.35;font-size:
     <option value="640|80|145">Térmico 80 × 145 mm (203 dpi)</option>
     <option value="945|80|145">Térmico 80 × 145 mm (300 dpi)</option>
   </select>
+  <label>Ancho del papel (mm)</label><input id="cWidth" type="number" step="0.5" min="40" max="104">
+  <label>Corrimiento horizontal (mm; + derecha, − izquierda)</label><input id="cShift" type="number" step="0.5" min="-20" max="20">
+  <label>Oscuridad de impresión (0–30; vacío = la de la impresora)</label><input id="cDark" type="number" min="0" max="30">
   <label>Tramado de la foto impresa</label>
   <select id="cDither">
     <option value="fs">Floyd–Steinberg (más detalle)</option>
@@ -110,10 +113,12 @@ const $ = id => document.getElementById(id);
 const DEFAULT_KEY = "56db7bd6e279757bd373883a2fe025cb";
 const DEFAULT_PRINT = "https://MacBook-Pro-de-Federico.local:8443/print"; // ← opcional: URL del servidor de impresión, ej. https://mi-mac.local:8443/print
 const DEFAULT_SCRIPT = "https://script.google.com/macros/s/AKfycbyPG3fev6Hc_1TkJJG3MkY7IPvnE6yO4Q8l8C5-zmpqN4uGplos7lAxvxeSwmVd-99FqA/exec"; // ← pegá acá la URL /exec de tu Google Apps Script
-const DEF = {event:"Mi Evento", paper:"640|80|145", secs:3, key:DEFAULT_KEY, script:DEFAULT_SCRIPT, print:DEFAULT_PRINT, dither:"fs", tone:.85};
+const DEF = {event:"Mi Evento", paper:"945|80|145", secs:3, key:DEFAULT_KEY, script:DEFAULT_SCRIPT, print:DEFAULT_PRINT, dither:"fs", tone:.85, width:80, shift:0, dark:""};
 let cfg = {...DEF}, photoData = null, shotDate = new Date(), sid = 0;
 
-try { Object.assign(cfg, JSON.parse(localStorage.getItem("pb_cfg") || "{}")); } catch(e){}
+let stored = {}; try { stored = JSON.parse(localStorage.getItem("pb_cfg") || "{}"); } catch(e){}
+if ((stored.v || 0) < 3) delete stored.paper;   // v3: el papel por defecto pasa a 300 dpi
+Object.assign(cfg, stored); cfg.v = 3;
 if (!cfg.key) cfg.key = DEFAULT_KEY;
 if (!cfg.script) cfg.script = DEFAULT_SCRIPT;
 if (!cfg.print) cfg.print = DEFAULT_PRINT;
@@ -121,7 +126,7 @@ if (!["640|80|145","945|80|145"].includes(cfg.paper)) cfg.paper = DEF.paper;
 function saveCfg(){ try { localStorage.setItem("pb_cfg", JSON.stringify(cfg)); } catch(e){} }
 
 const msg = t => $("msg").textContent = t || "";
-const paper = () => cfg.paper.split("|").map(Number);
+const paper = () => { const [w0, mm0, len] = cfg.paper.split("|").map(Number), mm = cfg.width || mm0; return [Math.round(w0 / mm0 * mm), mm, len]; };
 function controls(...btns){
   const c = $("controls"); c.innerHTML = "";
   btns.forEach(([label, fn, alt]) => {
@@ -133,7 +138,7 @@ function controls(...btns){
 /* ---- Geometría del ticket (1 píxel = 1 punto de la impresora) ---- */
 function layout(p){
   const W = p[0], u = W / 640, S = n => Math.round(n * u);
-  return {W, u, S, H: S(1160), dpmm: W / p[1], pw: W, ph: W};
+  return {W, u, S, H: S(1270), dpmm: W / p[1], pw: W, ph: W};
 }
 
 function applyCfg(){
@@ -146,7 +151,7 @@ function applyCfg(){
 /* ---- Cámara ---- */
 async function startCamera(){
   try {
-    const s = await navigator.mediaDevices.getUserMedia({video:{facingMode:"user",width:{ideal:1920},height:{ideal:1080}},audio:false});
+    const s = await navigator.mediaDevices.getUserMedia({video:{facingMode:"user",width:{ideal:3840},height:{ideal:2160}},audio:false});
     $("video").srcObject = s;
   } catch(e){ msg("No se pudo acceder a la cámara. Permití el acceso y recargá la página."); }
 }
@@ -173,12 +178,12 @@ function capture(){
   const v = $("video"), s = $("shot"), L = layout(paper()), ar = L.pw / L.ph;
   const w = v.videoWidth || 1280, h = v.videoHeight || 720;
   let sw = w, sh = w / ar; if (sh > h){ sh = h; sw = h * ar; }
-  s.width = Math.min(Math.round(sw), 2048); s.height = Math.round(s.width / ar);
+  s.width = Math.min(Math.round(sw), 2400); s.height = Math.round(s.width / ar);
   const x = s.getContext("2d"); x.imageSmoothingQuality = "high";
   x.save(); x.translate(s.width, 0); x.scale(-1, 1);
   x.drawImage(v, (w - sw) / 2, (h - sh) / 2, sw, sh, 0, 0, s.width, s.height);
   x.restore();
-  photoData = s.toDataURL("image/jpeg", .92); shotDate = new Date();
+  photoData = s.toDataURL("image/jpeg", .95); shotDate = new Date();
   $("flash").classList.remove("on"); void $("flash").offsetWidth; $("flash").classList.add("on");
   s.style.display = "block"; v.style.display = "none";
   $("sub").textContent = "¿Te gusta cómo quedó?";
@@ -213,6 +218,21 @@ function qrModules(text){
 }
 
 /* ---- Tono + tramado ---- */
+function boxBlur(src, w, h, r){
+  const tmp = new Float32Array(w * h), out = new Float32Array(w * h), k = 2 * r + 1;
+  for (let y = 0; y < h; y++){
+    const row = y * w; let acc = 0;
+    for (let x = -r; x <= r; x++) acc += src[row + Math.min(w - 1, Math.max(0, x))];
+    for (let x = 0; x < w; x++){ tmp[row + x] = acc / k; acc += src[row + Math.min(w - 1, x + r + 1)] - src[row + Math.max(0, x - r)]; }
+  }
+  for (let x = 0; x < w; x++){
+    let acc = 0;
+    for (let y = -r; y <= r; y++) acc += tmp[Math.min(h - 1, Math.max(0, y)) * w + x];
+    for (let y = 0; y < h; y++){ out[y * w + x] = acc / k; acc += tmp[Math.min(h - 1, y + r + 1) * w + x] - tmp[Math.max(0, y - r) * w + x]; }
+  }
+  return out;
+}
+
 function toneAndDither(ctx, x0, y0, w, h){
   const id = ctx.getImageData(x0, y0, w, h), d = id.data, n = w * h, g = new Float32Array(n), hist = new Uint32Array(256);
   for (let i = 0; i < n; i++){ const v = .299 * d[i*4] + .587 * d[i*4+1] + .114 * d[i*4+2]; g[i] = v; hist[v | 0]++; }
@@ -221,14 +241,11 @@ function toneAndDither(ctx, x0, y0, w, h){
   acc = 0; while (hi > 1 && (acc += hist[hi]) < n * .01) hi--;
   if (hi - lo < 40){ lo = 0; hi = 255; }
   for (let i = 0; i < n; i++) g[i] = 255 * Math.pow(Math.min(1, Math.max(0, (g[i] - lo) / (hi - lo))), cfg.tone);
-  const b = new Float32Array(n);  // desenfoque 3x3 para máscara de nitidez
-  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++){
-    let s = 0;
-    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++)
-      s += g[Math.min(h-1, Math.max(0, y+dy)) * w + Math.min(w-1, Math.max(0, x+dx))];
-    b[y*w+x] = s / 9;
-  }
-  for (let i = 0; i < n; i++) g[i] = Math.min(255, Math.max(0, g[i] + .7 * (g[i] - b[i])));
+  // contraste local (claridad) + nitidez fina: más definición al convertir a puntos
+  const big = boxBlur(g, w, h, Math.max(3, Math.round(w / 120)));
+  for (let i = 0; i < n; i++) g[i] += .5 * (g[i] - big[i]);
+  const sm = boxBlur(g, w, h, 1);
+  for (let i = 0; i < n; i++) g[i] = Math.min(255, Math.max(0, g[i] + .6 * (g[i] - sm[i])));
   const K = cfg.dither === "atk"
     ? [[1,0,1/8],[2,0,1/8],[-1,1,1/8],[0,1,1/8],[1,1,1/8],[0,2,1/8]]
     : [[1,0,7/16],[-1,1,3/16],[0,1,5/16],[1,1,1/16]];
@@ -245,16 +262,16 @@ function toneAndDither(ctx, x0, y0, w, h){
 }
 
 /* ---- Ticket ---- */
-const MONO = '"Courier New", Courier, "Hiragino Kaku Gothic ProN", "Hiragino Sans", "Yu Gothic", monospace';
+const MONO = '"Courier New", Courier, monospace';
 
 function nextNo(){
   try { const n = (parseInt(localStorage.getItem("pb_no")) || 0) + 1; localStorage.setItem("pb_no", n); return String(n).padStart(4, "0"); }
   catch(e){ return pad2(shotDate.getMinutes()) + pad2(shotDate.getSeconds()); }
 }
 
-// Fecha estilo cámara analógica: dígitos de 7 segmentos, inclinados, blancos con contorno negro
+// Fecha y hora estilo cámara analógica: 7 segmentos, inclinados, blancos con contorno negro
 function stamp(x, text, ox, oy, S){
-  const dw = S(26), dh = S(46), t = S(7), sp = S(14), o = S(2.5);
+  const dw = S(15), dh = S(27), t = S(4.2), sp = S(8), o = S(2.2);
   const MAP = {0:"abcdef",1:"bc",2:"abdeg",3:"abcdg",4:"bcfg",5:"acdfg",6:"acdefg",7:"abc",8:"abcdefg",9:"abcdfg"};
   const hl = dw - t * .5, vl = dh / 2 - t * .5;
   const hz = (cx, cy) => [[cx-hl/2,cy],[cx-hl/2+t/2,cy-t/2],[cx+hl/2-t/2,cy-t/2],[cx+hl/2,cy],[cx+hl/2-t/2,cy+t/2],[cx-hl/2+t/2,cy+t/2]];
@@ -262,8 +279,9 @@ function stamp(x, text, ox, oy, S){
   const pos = {a:[dw/2,0,hz], g:[dw/2,dh/2,hz], d:[dw/2,dh,hz], f:[0,dh/4,vt], b:[dw,dh/4,vt], e:[0,dh*3/4,vt], c:[dw,dh*3/4,vt]};
   const polys = []; let cx = 0;
   for (const ch of text){
-    if (ch === " "){ cx += dw * .6; continue; }
+    if (ch === " "){ cx += dw * .5; continue; }
     if (ch === "'"){ polys.push([[cx+t*.6,0],[cx+t*1.7,0],[cx+t*.9,dh*.3],[cx-t*.2,dh*.3]]); cx += t * 2.4; continue; }
+    if (ch === ":"){ for (const yy of [dh * .3, dh * .7]) polys.push([[cx,yy-t/2],[cx+t,yy-t/2],[cx+t,yy+t/2],[cx,yy+t/2]]); cx += t * 2.4; continue; }
     for (const s of MAP[ch]){ const [sx, sy, f] = pos[s]; polys.push(f(cx + sx, sy)); }
     cx += dw + sp;
   }
@@ -290,30 +308,30 @@ async function buildTicket(url){
   };
 
   // encabezado
-  T("✂", pad, S(10), S(16)); dash(S(10), 2, [8, 6], pad + S(26));
+  T("✂", pad, S(30), S(16)); dash(S(30), 2, [8, 6], pad + S(26));
   const title = cfg.event.toUpperCase(); let fs = S(46);
   x.textAlign = "center"; x.letterSpacing = S(6) + "px";
   do { x.font = `bold ${fs}px ${MONO}`; fs--; } while (x.measureText(title).width > W - 2 * pad && fs > 10);
-  x.fillText(title, W / 2, S(46)); x.letterSpacing = "0px";
-  T("RECEIPT No." + no, pad, S(82), S(17));
-  T("写真レシート", W - pad, S(82), S(17), {a: "right"});
+  x.fillText(title, W / 2, S(72)); x.letterSpacing = "0px";
+  T("RECEIPT No." + no, pad, S(112), S(17));
+  T("PHOTO RECEIPT", W - pad, S(112), S(17), {a: "right"});
 
   // foto: ancho completo, 1:1
-  const py = S(96), img = new Image(); img.src = photoData; await img.decode();
+  const py = S(136), img = new Image(); img.src = photoData; await img.decode();
   const iw = img.naturalWidth, ih = img.naturalHeight, side = Math.min(iw, ih);
   x.drawImage(img, (iw - side) / 2, (ih - side) / 2, side, side, 0, py, W, W);
   toneAndDither(x, 0, py, W, W);
-  stamp(x, `${pad2(d.getDate())} ${pad2(d.getMonth() + 1)} '${String(d.getFullYear()).slice(2)}`, S(26), py + S(24), S);
+  stamp(x, `${pad2(d.getDate())} ${pad2(d.getMonth() + 1)} '${String(d.getFullYear()).slice(2)}  ${pad2(d.getHours())}:${pad2(d.getMinutes())}`, S(22), py + S(18), S);
 
   // pie tipo recibo
-  const y0 = py + W + S(12);
+  const y0 = py + W + S(16);
   dash(y0, 2, [10, 6]);
   const qm = qrModules(url), mod = Math.max(3, Math.round(.4 * L.dpmm)), qs = (qm.n + 4) * mod;
-  const qx = W - pad - qs, qy = y0 + S(14);
+  const qx = W - pad - qs, qy = y0 + S(18);
   x.fillStyle = "#fff"; x.fillRect(qx, qy, qs, qs); x.fillStyle = "#000";
   for (let r = 0; r < qm.n; r++) for (let cc = 0; cc < qm.n; cc++)
     if (qm.dark(r, cc)) x.fillRect(qx + (cc + 2) * mod, qy + (r + 2) * mod, mod, mod);
-  T("SCAN 読み取り", qx + qs / 2, qy + qs + S(14), S(15), {a: "center", b: true, m: qs + S(20)});
+  T("SCAN", qx + qs / 2, qy + qs + S(16), S(15), {a: "center", b: true, k: S(3)});
 
   const lx = pad, cw = qx - S(18) - lx;
   const leader = (l, r, yy) => {
@@ -322,34 +340,34 @@ async function buildTicket(url){
     x.fillText(l, lx, yy); x.textAlign = "right"; x.fillText(r, lx + cw, yy);
     x.textAlign = "left"; x.fillText(".".repeat(Math.max(0, Math.floor((cw - wl - wr - S(14)) / wd))), lx + wl + S(7), yy);
   };
-  let ly = y0 + S(26);
-  leader("DATE 日付", `${pad2(d.getDate())}.${pad2(d.getMonth() + 1)}.${d.getFullYear()}`, ly); ly += S(28);
-  leader("TIME 時刻", `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`, ly); ly += S(28);
-  leader("No. 番号", no, ly); ly += S(28);
-  dash(ly, 1.5, [4, 4], lx, lx + cw); ly += S(28);
-  leader("PHOTO 写真", "x1", ly); ly += S(28);
-  leader("MEMORY 思い出", "∞", ly);
+  let ly = y0 + S(32);
+  leader("DATE", `${pad2(d.getDate())}.${pad2(d.getMonth() + 1)}.${d.getFullYear()}`, ly); ly += S(32);
+  leader("TIME", `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`, ly); ly += S(32);
+  leader("No.", no, ly); ly += S(32);
+  dash(ly, 1.5, [4, 4], lx, lx + cw); ly += S(32);
+  leader("PHOTO", "x1", ly); ly += S(32);
+  leader("MEMORY", "∞", ly);
 
   x.save(); x.translate(S(16), y0 + S(100)); x.rotate(-Math.PI / 2);
-  T("PHOTO RECEIPT 写真", 0, 0, S(14), {a: "center", m: S(170)}); x.restore();
+  T("THERMAL PRINT", 0, 0, S(14), {a: "center", m: S(170)}); x.restore();
 
   // total
-  const yt = y0 + S(196);
+  const yt = y0 + S(216);
   x.fillRect(pad, yt, W - 2 * pad, S(3));
-  T("合計 TOTAL", pad, yt + S(36), S(32), {b: true});
-  T("¥0", W - pad, yt + S(36), S(56), {a: "right", b: true});
+  T("TOTAL", pad, yt + S(42), S(32), {b: true});
+  T("¥0", W - pad, yt + S(42), S(56), {a: "right", b: true});
 
   // código de barras decorativo
-  const yb = yt + S(78); let sd = (parseInt(no) * 9973 + d.getTime() % 100000) >>> 0;
+  const yb = yt + S(92); let sd = (parseInt(no) * 9973 + d.getTime() % 100000) >>> 0;
   const rnd = () => { sd |= 0; sd = sd + 0x6D2B79F5 | 0; let z = Math.imul(sd ^ sd >>> 15, 1 | sd); z = z + Math.imul(z ^ z >>> 7, 61 | z) ^ z; return ((z ^ z >>> 14) >>> 0) / 4294967296; };
   for (let bx = pad, on = true; bx < W - pad; on = !on){
     const bw = S(2) * (1 + (rnd() * 4 | 0));
-    if (on) x.fillRect(bx, yb, Math.min(bw, W - pad - bx), S(52));
+    if (on) x.fillRect(bx, yb, Math.min(bw, W - pad - bx), S(54));
     bx += bw;
   }
-  T(`*${no}${pad2(d.getHours())}${pad2(d.getMinutes())}${pad2(d.getSeconds())}*`, W / 2, yb + S(66), S(15), {a: "center", k: S(4)});
-  T("THANK YOU * ありがとうございました", W / 2, yt + S(176), S(19), {a: "center", m: W - 2 * pad});
-  T("✂", pad, S(1148), S(16)); dash(S(1148), 2, [8, 6], pad + S(26));
+  T(`*${no}${pad2(d.getHours())}${pad2(d.getMinutes())}${pad2(d.getSeconds())}*`, W / 2, yb + S(74), S(15), {a: "center", k: S(4)});
+  T("THANK YOU * GRACIAS", W / 2, yb + S(108), S(19), {a: "center", m: W - 2 * pad});
+  T("✂", pad, S(1238), S(16)); dash(S(1238), 2, [8, 6], pad + S(26));
 
   // 1 bit: texto y líneas nítidos para la impresora térmica
   const id = x.getImageData(0, 0, W, H), pd = id.data;
@@ -380,8 +398,16 @@ function toZpl(c){
     }
     rows.push(row);
   }
-  const n = bpr * H;
-  return `^XA^CI28^MTD^MNN^PW${W}^LL${H}^LH0,0^PON^FO0,0^GFA,${n},${n},${bpr},${rows.join("").toUpperCase()}^FS^XZ`;
+  const n = bpr * H, sh = Math.round((cfg.shift || 0) * W / paper()[1]), dk = cfg.dark === "" ? "" : `~SD${cfg.dark}`;
+  return `${dk}^XA^CI28^MTD^MNN^PW${W}^LL${H}^LH0,0^LS${-sh}^PON^FO0,0^GFA,${n},${n},${bpr},${rows.join("").toUpperCase()}^FS^XZ`;
+}
+
+async function syncDpi(){   // si el servidor informa los dpi de la Zebra, elige el papel que corresponde
+  if (!cfg.print) return;
+  try {
+    const j = await (await fetch(cfg.print.replace(/\/print\/?$/, "/info"))).json();
+    if (j.dpi){ const want = j.dpi >= 250 ? "945|80|145" : "640|80|145"; if (cfg.paper !== want){ cfg.paper = want; saveCfg(); applyCfg(); } }
+  } catch(e){}
 }
 
 let lastPng = null, lastZpl = null;
@@ -429,7 +455,8 @@ async function printFlow(){
 $("gear").onclick = () => {
   $("cEvent").value = cfg.event; $("cPaper").value = cfg.paper; if (!$("cPaper").value) $("cPaper").selectedIndex = 0;
   $("cDither").value = cfg.dither; $("cTone").value = String(cfg.tone); if (!$("cTone").value) $("cTone").value = "0.85";
-  $("cSecs").value = cfg.secs; $("cScript").value = cfg.script; $("cPrint").value = cfg.print; $("cKey").value = cfg.key;
+  $("cSecs").value = cfg.secs; $("cScript").value = cfg.script; $("cPrint").value = cfg.print;
+  $("cWidth").value = cfg.width; $("cShift").value = cfg.shift; $("cDark").value = cfg.dark; $("cKey").value = cfg.key;
   $("cfg").showModal();
 };
 $("cClose").onclick = () => $("cfg").close();
@@ -437,11 +464,13 @@ $("cSave").onclick = () => {
   cfg.event = $("cEvent").value.trim() || DEF.event;
   cfg.paper = $("cPaper").value; cfg.dither = $("cDither").value; cfg.tone = parseFloat($("cTone").value);
   cfg.secs = Math.max(1, Math.min(10, parseInt($("cSecs").value) || 3));
-  cfg.script = $("cScript").value.trim(); cfg.print = $("cPrint").value.trim(); cfg.key = $("cKey").value.trim() || DEFAULT_KEY;
-  saveCfg(); applyCfg(); $("cfg").close();
+  cfg.script = $("cScript").value.trim(); cfg.print = $("cPrint").value.trim();
+  cfg.width = Math.min(104, Math.max(40, parseFloat($("cWidth").value) || 80)); cfg.shift = parseFloat($("cShift").value) || 0;
+  cfg.dark = $("cDark").value === "" ? "" : Math.min(30, Math.max(0, parseInt($("cDark").value) || 0)); cfg.key = $("cKey").value.trim() || DEFAULT_KEY;
+  saveCfg(); applyCfg(); $("cfg").close(); syncDpi();
 };
 
-applyCfg(); startCamera(); home();
+applyCfg(); startCamera(); home(); syncDpi();
 </script>
 </body>
 </html>
